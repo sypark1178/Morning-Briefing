@@ -15,6 +15,19 @@ from bs4 import BeautifulSoup
 import yfinance as yf
 import openai
 
+# ── .env 파일 자동 로드 (로컬 실행 시) ──────────────────────
+try:
+    from dotenv import load_dotenv
+    # briefing.py 와 같은 폴더의 .env 를 명시적으로 지정
+    _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(_env_path):
+        load_dotenv(_env_path, override=True)
+        print(f"[dotenv] .env 로드 완료: {_env_path}")
+    else:
+        print(f"[dotenv] .env 파일 없음 (GitHub Actions Secrets 모드): {_env_path}")
+except ImportError:
+    print("[dotenv] python-dotenv 미설치 → pip install python-dotenv")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -34,7 +47,7 @@ KST = timezone(timedelta(hours=9))
 def _env(key: str, required=True) -> str:
     v = os.environ.get(key, "").strip()
     if required and not v:
-        log.error(f"❌ 환경변수 누락: {key}")
+        log.error(f"❌ 환경변수 누락: {key}  →  .env 파일 또는 GitHub Secrets 확인 필요")
         sys.exit(1)
     return v
 
@@ -195,12 +208,18 @@ def fetch_weather(city: str) -> dict:
 # ═══════════════════════════════════════════════════════════════
 _kis_token: dict = {"access_token": "", "expire": 0}
 KIS_BASE_URL = "https://openapi.koreainvestment.com:22443"   # 실전투자
+KIS_AVAILABLE = None   # None=미확인, True=사용가능, False=사용불가
 
 
 def _kis_get_token() -> bool:
+    global KIS_AVAILABLE
+    # 이미 사용불가로 확인된 경우 즉시 False 반환 (반복 타임아웃 방지)
+    if KIS_AVAILABLE is False:
+        return False
     if _kis_token["access_token"] and time.time() < _kis_token["expire"]:
         return True
     if not KIS_APP_KEY or not KIS_APP_SECRET:
+        KIS_AVAILABLE = False
         return False
     try:
         res = requests.post(
@@ -211,17 +230,20 @@ def _kis_get_token() -> bool:
                 "appkey": KIS_APP_KEY,
                 "appsecret": KIS_APP_SECRET,
             }),
-            timeout=15,
+            timeout=5,   # 5초로 단축 (기존 15초 → 타임아웃 150초 낭비 방지)
         )
         if res.status_code == 200:
             d = res.json()
             _kis_token["access_token"] = d["access_token"]
             _kis_token["expire"] = time.time() + 86400 - 300
+            KIS_AVAILABLE = True
             log.info("✅ KIS 토큰 발급 성공")
             return True
         log.warning(f"⚠️ KIS 토큰 발급 실패: {res.status_code} {res.text[:100]}")
+        KIS_AVAILABLE = False
     except Exception as e:
-        log.warning(f"⚠️ KIS 토큰 예외: {e}")
+        log.warning(f"⚠️ KIS 접속 불가 (yfinance로 전환): {e}")
+        KIS_AVAILABLE = False   # 1회 실패 시 이후 모든 종목은 yfinance 사용
     return False
 
 
@@ -362,9 +384,16 @@ def _gpt(system: str, user: str, temperature=0.35, max_tokens=900) -> str:
             ],
         )
         return r.choices[0].message.content.strip()
+    except openai.RateLimitError as e:
+        err_body = str(e)
+        if "insufficient_quota" in err_body:
+            log.warning("⚠️ OpenAI 크레딧 소진 — platform.openai.com/billing 에서 충전 필요")
+            return "⚠️ [OpenAI 크레딧 소진] platform.openai.com/billing 에서 충전 후 재실행하세요."
+        log.warning(f"⚠️ GPT 요청 한도 초과 (잠시 후 재시도): {e}")
+        return "⚠️ [GPT 요청 한도 초과] 잠시 후 다시 실행해 주세요."
     except Exception as e:
         log.warning(f"⚠️ GPT 호출 실패: {e}")
-        return f"[GPT 오류: {e}]"
+        return f"⚠️ [GPT 오류] {e}"
 
 
 def gpt_summarize(topic: str, arts: list) -> str:
