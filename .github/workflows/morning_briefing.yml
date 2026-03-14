@@ -24,11 +24,11 @@ jobs:
       - name: 📥 코드 체크아웃
         uses: actions/checkout@v4
 
-      # ── 2. Python 3.11 설정 ────────────────────────────
-      - name: 🐍 Python 3.11 설정
+      # ── 2. Python 3.12 설정 ────────────────────────────
+      - name: 🐍 Python 3.12 설정
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: pip
 
       # ── 3. 의존성 설치 ─────────────────────────────────
