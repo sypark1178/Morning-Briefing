@@ -24,4 +24,5 @@ jobs:
       - name: Run script
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: python main.py
+        
+        run: python .github/workflows/briefing.py
