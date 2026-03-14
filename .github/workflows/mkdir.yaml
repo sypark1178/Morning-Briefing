@@ -1,0 +1,6 @@
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create subdirectory
+        run: mkdir -p Morning-Briefing/src
