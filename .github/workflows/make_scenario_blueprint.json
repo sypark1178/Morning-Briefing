@@ -1,0 +1,113 @@
+{
+  "name": "🌅 아침 브리핑 자동 발송",
+  "flow": [
+    {
+      "id": 1,
+      "module": "gateway:CustomWebHook",
+      "version": 1,
+      "parameters": {
+        "hook": "12gljsk31jxofk8iqg33bbnlks4oxdj4",
+        "maxResults": 1
+      },
+      "mapper": {},
+      "metadata": {
+        "designer": { "x": 0, "y": 0 },
+        "restore": {
+          "parameters": {
+            "hook": {
+              "label": "아침 브리핑 Webhook",
+              "url": "https://hook.us2.make.com/12gljsk31jxofk8iqg33bbnlks4oxdj4"
+            }
+          }
+        },
+        "expect": [
+          { "name": "html_body",   "type": "text",   "label": "HTML 본문" },
+          { "name": "subject",     "type": "text",   "label": "메일 제목" },
+          { "name": "sent_at",     "type": "text",   "label": "발송 시각(KST)" }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "module": "gmail:ActionSendEmail",
+      "version": 1,
+      "parameters": { "account": "sypark1178@gmail.com" },
+      "mapper": {
+        "to":       "sypark1178@naver.com",
+        "subject":  "{{1.subject}}",
+        "content":  "{{1.html_body}}",
+        "contentType": "html",
+        "from":     "sypark1178@gmail.com",
+        "fromName": "🌅 아침 브리핑"
+      },
+      "metadata": {
+        "designer": { "x": 300, "y": 0 },
+        "restore": {
+          "parameters": { "account": { "label": "sypark1178@gmail.com" } },
+          "expect": {
+            "to": { "mode": "chose", "label": "sypark1178@naver.com" },
+            "contentType": { "label": "HTML" }
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "module": "gmail:ActionSendEmail",
+      "version": 1,
+      "parameters": { "account": "sypark1178@gmail.com" },
+      "mapper": {
+        "to":       "pjh200106@sogang.ac.kr",
+        "subject":  "{{1.subject}}",
+        "content":  "{{1.html_body}}",
+        "contentType": "html",
+        "from":     "sypark1178@gmail.com",
+        "fromName": "🌅 아침 브리핑"
+      },
+      "metadata": { "designer": { "x": 300, "y": 150 } }
+    },
+    {
+      "id": 4,
+      "module": "gmail:ActionSendEmail",
+      "version": 1,
+      "parameters": { "account": "sypark1178@gmail.com" },
+      "mapper": {
+        "to":       "mihwa.lee@myangel.co.kr",
+        "subject":  "{{1.subject}}",
+        "content":  "{{1.html_body}}",
+        "contentType": "html",
+        "from":     "sypark1178@gmail.com",
+        "fromName": "🌅 아침 브리핑"
+      },
+      "metadata": { "designer": { "x": 300, "y": 300 } }
+    },
+    {
+      "id": 5,
+      "module": "gateway:WebhookRespond",
+      "version": 1,
+      "parameters": {},
+      "mapper": {
+        "status": "200",
+        "body": "{\"status\":\"ok\",\"sent_at\":\"{{1.sent_at}}\"}"
+      },
+      "metadata": { "designer": { "x": 600, "y": 150 } }
+    }
+  ],
+  "metadata": {
+    "instant": true,
+    "version": 1,
+    "scenario": {
+      "roundtrips":        1,
+      "maxErrors":         3,
+      "autoCommit":        true,
+      "autoCommitTriggerLast": true,
+      "sequential":        false,
+      "confidential":      false,
+      "dataloss":          false,
+      "dlq":               false,
+      "freshVariables":    false
+    },
+    "designer": { "orphans": [] },
+    "zone": "us2.make.com"
+  }
+}
