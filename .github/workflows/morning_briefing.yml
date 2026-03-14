@@ -35,7 +35,7 @@ jobs:
       - name: 📦 패키지 설치
         run: |
           python -m pip install --upgrade pip
-          pip install -r .github/requirements.txt
+          pip install -r requirements.txt
 
 
       # ── 4. 브리핑 생성 & Make Webhook 발송 ────────────
@@ -55,7 +55,7 @@ jobs:
           DEBUG_MODE:         ${{ github.event.inputs.debug || 'false' }}
 
         run: |
-           run: python .github/briefing.py
+           run: python briefing.py
 
       # ── 5. 실행 로그 아티팩트 보존 (7일) ──────────────
       - name: 📋 로그 아티팩트 저장
