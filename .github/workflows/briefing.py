@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 🌅 아침 브리핑 — GitHub Actions + Make Webhook 자동 발송
-v18  |  2026-03  |  KST 06:00 매일 실행
+v20  |  2026-03  |  KST 06:00 매일 실행
+변경: 거시경제지표 섹션 추가 (코스피/코스닥/나스닥/S&P/다우/원달러/WTI/금)
 """
 
 # ═══════════════════════════════════════════════════════════════
@@ -69,7 +70,7 @@ CITIES = {
     "대구": {"lat": 35.8714, "lon": 128.6014},
 }
 
-# 보유 종목 (디폴트)
+# 관심 종목 (디폴트)
 DEFAULT_TICKERS: dict[str, str] = {
     "삼성전자":       "005930.KS",
     "SK하이닉스":     "000660.KS",
@@ -93,10 +94,26 @@ TOPIC_KEYWORDS = {
 }
 
 # 추가 키워드 (분야 공통 보조)
-EXTRA_KEYWORDS = ["트럼프 관세", "반도체", "환율", "방산", "부동산정책"]
+EXTRA_KEYWORDS = ["관세","천궁","K9전차","홍해","코스피200","코스닥","반도체","금리","보유세","부동산정책","유가", "양도소득세", "환율", "방산", "부동산정책", "AI", "로봇", "전기차", "우주항공", "원전", "SMR", "해외증시"]
 
-NEWS_CUTOFF_DAYS = 30   # 30일 이내
+NEWS_CUTOFF_DAYS = 30    # 30일 이내
 N_ARTICLES       = 10   # 분야별 최대 10건
+
+# 뉴스 중복 제거 우선순위 (앞 분야가 먼저 독점, 뒤 분야는 나머지에서 선택)
+DEDUP_PRIORITY = ["💰 경제", "🏦 금융", "📈 주식", "🛡️ 방산"]
+
+# ── 거시경제지표 (yfinance ticker 기준) ─────────────────────
+MACRO_INDICATORS = [
+    # (표시명,          yfinance ticker,  단위,    소수점자리)
+    ("코스피",          "^KS11",          "pt",    2),
+    ("코스닥",          "^KQ11",          "pt",    2),
+    ("나스닥",          "^IXIC",          "pt",    2),
+    ("S&P 500",        "^GSPC",          "pt",    2),
+    ("다우존스",        "^DJI",           "pt",    2),
+    ("원/달러 환율",    "KRW=X",          "원",    1),
+    ("WTI 원유(26-04)", "CL=F",           "$/bbl", 2),
+    ("금 선물(26-04)",  "GC=F",           "$/oz",  2),
+]
 
 MAIL_SUBJECT = "🌅 오늘의 아침 브리핑"
 
@@ -207,7 +224,8 @@ def fetch_weather(city: str) -> dict:
 # 4. 한국투자증권 KIS API (국내주식 현재가)
 # ═══════════════════════════════════════════════════════════════
 _kis_token: dict = {"access_token": "", "expire": 0}
-KIS_BASE_URL = "https://openapi.koreainvestment.com:22443"   # 실전투자
+# KIS_BASE_URL = "https://openapi.koreainvestment.com:22443"   # 실전투자
+KIS_BASE_URL = "https://openapivts.koreainvestment.com:29443"   # 모의투자
 KIS_AVAILABLE = None   # None=미확인, True=사용가능, False=사용불가
 
 
@@ -335,16 +353,72 @@ def fetch_stock_prices(tickers: dict[str, str]) -> list[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 5. Google News RSS 수집
+# 4-B. 거시경제지표 조회 (yfinance)
 # ═══════════════════════════════════════════════════════════════
-def fetch_news(keyword: str, n: int = N_ARTICLES) -> list[dict]:
+def fetch_macro_indicators() -> list[dict]:
+    """
+    코스피/코스닥/나스닥/S&P/다우/원달러/WTI/금 지표를
+    yfinance로 조회하여 전일·당일·변동 dict 리스트로 반환.
+    """
+    results = []
+    for name, ticker, unit, decimals in MACRO_INDICATORS:
+        try:
+            tk   = yf.Ticker(ticker)
+            info = tk.info
+
+            # 현재가: regularMarketPrice 또는 currentPrice
+            curr = float(
+                info.get("regularMarketPrice") or
+                info.get("currentPrice") or 0
+            )
+            # 전일 종가: previousClose 또는 regularMarketPreviousClose
+            prev = float(
+                info.get("previousClose") or
+                info.get("regularMarketPreviousClose") or 0
+            )
+            change  = curr - prev
+            pct     = change / prev * 100 if prev else 0
+
+            fmt = f",.{decimals}f"
+            results.append({
+                "name":     name,
+                "ticker":   ticker,
+                "unit":     unit,
+                "curr":     curr,
+                "prev":     prev,
+                "change":   change,
+                "pct":      pct,
+                "curr_s":   f"{curr:{fmt}}",
+                "prev_s":   f"{prev:{fmt}}",
+                "change_s": f"{abs(change):{fmt}}",
+                "pct_s":    f"{abs(pct):.2f}",
+            })
+            log.info(f"  ✓ 거시지표 [{name}]: {curr:{fmt}} {unit} ({'+' if change>=0 else '-'}{abs(pct):.2f}%)")
+        except Exception as e:
+            log.warning(f"⚠️ 거시지표 조회 실패 [{name}/{ticker}]: {e}")
+            results.append({
+                "name": name, "ticker": ticker, "unit": unit,
+                "curr": 0, "prev": 0, "change": 0, "pct": 0,
+                "curr_s": "-", "prev_s": "-", "change_s": "-", "pct_s": "-",
+                "error": str(e),
+            })
+        time.sleep(0.1)
+
+    log.info(f"✅ 거시경제지표 조회 완료: {len(results)}건")
+    return results
+def fetch_news(keyword: str, n: int = N_ARTICLES, pool: int = 0) -> list[dict]:
+    """
+    keyword 로 RSS 검색 후 최신순 정렬해서 반환.
+    pool > 0 이면 중복 제거용 후보풀 크기로 사용 (n보다 많이 수집).
+    """
+    fetch_size = pool if pool > n else n
     url = (f"https://news.google.com/rss/search"
            f"?q={quote(keyword)}&hl=ko&gl=KR&ceid=KR:ko")
     cutoff = datetime.now(timezone.utc) - timedelta(days=NEWS_CUTOFF_DAYS)
     try:
         feed = feedparser.parse(url)
         arts = []
-        for e in feed.entries[:n * 5]:
+        for e in feed.entries[:fetch_size * 5]:
             pub = e.get("published", e.get("updated", ""))
             dt  = parse_dt(pub)
             if not dt.tzinfo:
@@ -362,8 +436,8 @@ def fetch_news(keyword: str, n: int = N_ARTICLES) -> list[dict]:
                 "_dt":     dt,
             })
         arts.sort(key=lambda x: x["_dt"], reverse=True)
-        log.info(f"✅ 뉴스 수집 [{keyword}]: {len(arts[:n])}건")
-        return arts[:n]
+        log.info(f"✅ 뉴스 수집 [{keyword}]: {len(arts[:fetch_size])}건 (후보풀)")
+        return arts[:fetch_size]
     except Exception as e:
         log.warning(f"⚠️ 뉴스 수집 실패 [{keyword}]: {e}")
         return []
@@ -568,7 +642,77 @@ def _build_stock_html(stocks: list) -> str:
 </table>"""
 
 
-def _section(title: str, color: str, content: str) -> str:
+def _build_macro_html(macros: list) -> str:
+    """거시경제지표 전일/당일/변동 테이블 HTML"""
+    if not macros:
+        return "<p style='color:#aaa;font-size:12px;'>거시지표 데이터 없음</p>"
+
+    rows = ""
+    for i, m in enumerate(macros):
+        up      = m["change"] >= 0
+        arrow   = "▲" if up else "▼"
+        row_bg  = "#fffaf5" if i % 2 == 0 else "#fff"
+        clr     = "#c0392b" if up else "#1a5fa8"
+        pct_bg  = "#fde8e8" if up else "#ddeeff"
+        has_err = m.get("error")
+
+        if has_err:
+            rows += f"""
+<tr style='background:{row_bg};border-bottom:1px solid #f0f0f0;'>
+  <td style='padding:8px 6px;font-size:11px;color:#bbb;text-align:center;'>{i+1}</td>
+  <td style='padding:8px 10px;font-size:12px;font-weight:700;color:#555;'>{m['name']}</td>
+  <td colspan='4' style='padding:8px;font-size:11px;color:#e74c3c;text-align:center;'>
+    ⚠️ 조회 실패
+  </td>
+</tr>"""
+            continue
+
+        rows += f"""
+<tr style='background:{row_bg};border-bottom:1px solid #f0f0f0;'>
+  <td style='padding:8px 6px;font-size:11px;color:#bbb;text-align:center;'>{i+1}</td>
+  <td style='padding:8px 10px;'>
+    <div style='font-size:12px;font-weight:800;color:#1a1a2e;'>{m['name']}</div>
+    <div style='font-size:10px;color:#bbb;'>{m['ticker']}</div>
+  </td>
+  <td style='padding:8px;text-align:right;font-size:13px;font-weight:900;
+             color:{clr};white-space:nowrap;font-variant-numeric:tabular-nums;'>
+    {m['curr_s']} <span style='font-size:10px;font-weight:400;color:#aaa;'>{m['unit']}</span>
+  </td>
+  <td style='padding:8px 6px;text-align:right;font-size:11px;
+             color:{clr};white-space:nowrap;'>
+    {arrow} {m['change_s']}
+  </td>
+  <td style='padding:8px;text-align:center;'>
+    <span style='background:{pct_bg};color:{clr};border-radius:10px;
+                 padding:2px 8px;font-size:11px;font-weight:800;white-space:nowrap;'>
+      {arrow} {m['pct_s']}%
+    </span>
+  </td>
+  <td style='padding:8px;text-align:right;font-size:10px;color:#aaa;white-space:nowrap;'>
+    전일 {m['prev_s']}
+  </td>
+</tr>"""
+
+    now_s = now_kst().strftime("%H:%M 기준")
+    return f"""
+<table style='width:100%;border-collapse:collapse;font-family:Malgun Gothic,sans-serif;'>
+  <thead>
+    <tr style='background:linear-gradient(90deg,#1a2a4a,#243b6e);
+               border-bottom:2px solid #1a2a4a;'>
+      <th style='padding:8px 6px;font-size:11px;color:#94b8e8;text-align:center;'>#</th>
+      <th style='padding:8px 10px;font-size:11px;color:#94b8e8;text-align:left;'>지표</th>
+      <th style='padding:8px;font-size:11px;color:#94b8e8;text-align:right;'>현재</th>
+      <th style='padding:8px 6px;font-size:11px;color:#94b8e8;text-align:right;'>등락</th>
+      <th style='padding:8px;font-size:11px;color:#94b8e8;text-align:center;'>등락률</th>
+      <th style='padding:8px;font-size:11px;color:#94b8e8;text-align:right;'>전일종가</th>
+    </tr>
+  </thead>
+  <tbody>{rows}</tbody>
+</table>
+<div style='background:#f8fafc;padding:5px 12px;text-align:right;
+            font-size:10px;color:#cbd5e1;border-top:1px solid #e2e8f0;'>
+  yfinance 기준 · {now_s} · 시장 마감 후에는 전일 종가 표시
+</div>"""
     return f"""
 <div style='margin-bottom:24px;'>
   <div style='background:{color};color:#fff;padding:8px 16px;
@@ -611,6 +755,7 @@ def build_email_html(
     city: str,
     wd: dict,
     stocks: list,
+    macros: list,       # ← 거시경제지표 추가
     topic_arts: dict,   # {topic: [arts]}
     topic_sums: dict,   # {topic: gpt_summary}
     top3: str,
@@ -622,6 +767,9 @@ def build_email_html(
 
     # ── 날씨 ──────────────────────────────────────────────
     weather_html = _build_weather_html(wd, city)
+
+    # ── 거시경제지표 ──────────────────────────────────────
+    macro_html = _build_macro_html(macros)
 
     # ── 주식 ──────────────────────────────────────────────
     stock_html = _build_stock_html(stocks)
@@ -753,10 +901,19 @@ def build_email_html(
     </h2>
     {weather_html}
 
-    <!-- 보유주식 현재가 -->
+    <!-- 거시경제지표 -->
     <h2 style="font-size:15px;color:#1b4332;border-bottom:3px solid #40916c;
                padding-bottom:6px;margin:24px 0 14px;font-weight:800;">
-      📈 보유종목 시세
+      🌐 거시경제지표
+    </h2>
+    <div style="border:1px solid #1a2a4a;border-radius:10px;overflow:hidden;">
+      {macro_html}
+    </div>
+
+    <!-- 관심주식 현재가 -->
+    <h2 style="font-size:15px;color:#1b4332;border-bottom:3px solid #40916c;
+               padding-bottom:6px;margin:24px 0 14px;font-weight:800;">
+      📈 관심종목 시세
     </h2>
     <div style="border:1px solid #e8edf5;border-radius:10px;overflow:hidden;">
       {stock_html}
@@ -852,33 +1009,64 @@ def main():
     wd = fetch_weather(CITY)
 
     # ── 주식 ──
-    log.info("📈 [2/6] 주가 조회...")
+    log.info("📈 [2/7] 주가 조회...")
     stocks = fetch_stock_prices(DEFAULT_TICKERS)
 
-    # ── 뉴스 수집 + GPT 요약 ──
-    log.info("📰 [3/6] 뉴스 수집 및 GPT 요약...")
+    # ── 거시경제지표 ──
+    log.info("🌐 [3/7] 거시경제지표 조회...")
+    macros = fetch_macro_indicators()
+
+    # ── 뉴스 수집 + 중복 제거 + GPT 요약 ──────────────────────
+    log.info("📰 [4/7] 뉴스 수집 및 중복 제거 후 GPT 요약...")
+
+    # Step 1: 우선순위 순서로 후보풀 수집 (각 분야 N_ARTICLES * 3 개씩 넉넉히)
+    POOL_SIZE = N_ARTICLES * 3
+    raw_pools: dict[str, list] = {}
+    for topic in DEDUP_PRIORITY:
+        kw   = TOPIC_KEYWORDS.get(topic, topic)
+        pool = fetch_news(kw, n=N_ARTICLES, pool=POOL_SIZE)
+        raw_pools[topic] = pool
+
+    # Step 2: 우선순위 순서로 기사 배정 — 이미 선점된 URL은 후순위 분야에서 제외
+    used_urls: set[str] = set()   # 전체 분야 통틀어 선정된 기사 URL
     topic_arts: dict[str, list] = {}
-    topic_sums: dict[str, str]  = {}
-    all_arts: list[dict]        = []
+
+    for topic in DEDUP_PRIORITY:
+        candidates = raw_pools.get(topic, [])
+        selected   = []
+        for art in candidates:
+            url = art.get("link", "").strip()
+            # URL 기준 중복 체크 (동일 기사가 여러 분야에 들어가는 것 방지)
+            if url and url in used_urls:
+                continue
+            selected.append(art)
+            if url:
+                used_urls.add(url)
+            if len(selected) >= N_ARTICLES:
+                break
+        topic_arts[topic] = selected
+        log.info(f"  ✓ {topic}: 후보 {len(candidates)}건 → 중복제거 후 {len(selected)}건 선정")
+
+    # Step 3: TOPICS 순서로 재정렬 (이메일 표시 순서 유지), GPT 요약
+    topic_sums: dict[str, str] = {}
+    all_arts:   list[dict]     = []
 
     for topic in TOPICS:
-        kw   = TOPIC_KEYWORDS.get(topic, topic)
-        arts = fetch_news(kw, N_ARTICLES)
+        arts = topic_arts.get(topic, [])
         for a in arts:
             a["topic"] = topic
-        topic_arts[topic] = arts
         all_arts.extend(arts)
 
         gsum = gpt_summarize(topic, arts)
         topic_sums[topic] = gsum
-        log.info(f"  ✓ {topic}: {len(arts)}건 수집·요약 완료")
+        log.info(f"  ✓ {topic}: GPT 요약 완료")
 
     # ── TOP3 ──
-    log.info("🔥 [4/6] TOP3 선정...")
+    log.info("🔥 [5/7] TOP3 선정...")
     top3 = gpt_top3(all_arts)
 
     # ── AI 시장 분석 ──
-    log.info("📊 [5/6] AI 시장 분석...")
+    log.info("📊 [6/7] AI 시장 분석...")
     market = gpt_market_analysis(all_arts)
 
     # ── 한마디 ──
@@ -886,11 +1074,12 @@ def main():
     comment = gpt_comment(wd, CITY, topic_sums)
 
     # ── HTML 이메일 빌드 ──
-    log.info("🖥️  [6/6] HTML 이메일 빌드...")
+    log.info("🖥️  [7/7] HTML 이메일 빌드...")
     html_body = build_email_html(
         city=CITY,
         wd=wd,
         stocks=stocks,
+        macros=macros,
         topic_arts=topic_arts,
         topic_sums=topic_sums,
         top3=top3,
