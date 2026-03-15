@@ -1,19 +1,70 @@
 name: 🌅 아침 브리핑 자동 발송
 
 on:
+  # ── 매일 KST 05:27 = UTC 20:27 (전날) ──────────────────
   schedule:
-    # 한국 시간(KST) 오전 6시 = UTC 21:00 (전날)
-    - cron: "16 09 * * *"
-  workflow_dispatch: 
-  
+    - cron: "27 20 * * *"
+
+  # ── 수동 실행 (테스트용) ────────────────────────────────
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: "디버그 모드 (true/false)"
+        required: false
+        default: "false"
+
 jobs:
-  send_briefing:        # Job ID (이름은 자유롭게 지정 가능)
-    runs-on: ubuntu-latest  # 실행 환경 정의 (필수)
-    steps:              # 작업 단계 시작
-      - name: 📦 소스코드 가져오기
+  send-briefing:
+    name: 브리핑 생성 & 발송
+    runs-on: ubuntu-latest
+    timeout-minutes: 30        # 최대 30분 (GPT + 뉴스 수집 고려)
+
+    steps:
+      # ── 1. 코드 체크아웃 ───────────────────────────────
+      - name: 📥 코드 체크아웃
         uses: actions/checkout@v4
 
-      - name: 📦 패키지 설치 및 확인
+      # ── 2. Python 3.12 설정 ────────────────────────────
+      - name: 🐍 Python 3.12 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # ── 3. 의존성 설치 ─────────────────────────────────
+      - name: 📦 패키지 설치
         run: |
-          ls -R         # 현재 디렉토리 구조 전체 확인 (추천)
-          echo "hello Test github action"
+          python -m pip install --upgrade pip
+          pip install -r  requirements.txt
+
+
+      # ── 4. 브리핑 생성 & Make Webhook 발송 ────────────
+      - name: 🌅 브리핑 생성 및 Make Webhook 발송
+        env:
+          # ── OpenAI ─────────────────────────────────────
+          OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+
+          # ── 한국투자증권 KIS API ───────────────────────
+          KIS_APP_KEY:        ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:     ${{ secrets.KIS_APP_SECRET }}
+
+          # ── Make Webhook ───────────────────────────────
+          MAKE_WEBHOOK_URL:   ${{ secrets.MAKE_WEBHOOK_URL }}
+
+          # ── 디버그 플래그 ──────────────────────────────
+          DEBUG_MODE:         ${{ github.event.inputs.debug || 'false' }}
+
+        run: |
+           python briefing.py
+
+      # ── 5. 실행 로그 아티팩트 보존 (7일) ──────────────
+      - name: 📋 로그 아티팩트 저장
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: briefing-log-${{ github.run_id }}
+          path: |
+            briefing_output.html
+            briefing_log.txt
+          retention-days: 7
+          if-no-files-found: ignore
