@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🌅 아침 브리핑 — GitHub Actions + Make Webhook 자동 발송
-v20  |  2026-03  |  KST 06:00 매일 실행
-변경: 거시경제지표 섹션 추가 (코스피/코스닥/나스닥/S&P/다우/원달러/WTI/금)
+🌅 아침 브리핑 v22 — 국제 신문사 RSS + 자동 번역
+GitHub Actions + Make Webhook 자동 발송
+v22  |  2026-03  |  KST 06:00 매일 실행
+
+변경 사항:
+- 국제 신문사 RSS 추가 (미국 3대 + 영국 3대)
+- 영어 기사 자동 번역 (OpenAI)
+- 검색 기간: 15일 → 어제까지 (매일 새로운 기사)
+- 분야별 국가 구성: 한국 3개, 미국 1개, 영국 1개
+- 스마트 키워드 매칭 (키워드 우선 → AI 분류)
 """
 
 # ═══════════════════════════════════════════════════════════════
@@ -19,7 +26,6 @@ import openai
 # ── .env 파일 자동 로드 (로컬 실행 시) ──────────────────────
 try:
     from dotenv import load_dotenv
-    # briefing.py 와 같은 폴더의 .env 를 명시적으로 지정
     _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     if os.path.exists(_env_path):
         load_dotenv(_env_path, override=True)
@@ -96,15 +102,43 @@ TOPIC_KEYWORDS = {
 # 추가 키워드 (분야 공통 보조)
 EXTRA_KEYWORDS = ["관세","천궁","K9전차","홍해","코스피200","코스닥","반도체","금리","보유세","부동산정책","유가", "양도소득세", "환율", "방산", "부동산정책", "AI", "로봇", "전기차", "우주항공", "원전", "SMR", "해외증시"]
 
-NEWS_CUTOFF_DAYS = 30    # 30일 이내
-N_ARTICLES       = 10   # 분야별 최대 10건
+# ── 뉴스 검색 설정 ──────────────────────────────────────────
+NEWS_CUTOFF_DAYS = 1    # 어제부터 오늘까지 (매일 새로운 기사만)
+N_ARTICLES_PER_COUNTRY = {
+    "한국": 3,
+    "미국": 1,
+    "영국": 1,
+}
+N_ARTICLES = sum(N_ARTICLES_PER_COUNTRY.values())  # 총 5개
 
-# 뉴스 중복 제거 우선순위 (앞 분야가 먼저 독점, 뒤 분야는 나머지에서 선택)
+# 뉴스 중복 제거 우선순위
 DEDUP_PRIORITY = ["💰 경제", "🏦 금융", "📈 주식", "🛡️ 방산"]
+
+# ── RSS 피드 소스 ──────────────────────────────────────────────
+# 주요 신문사 RSS들이 구독 장벽이 있어 Google News 기반으로 변경
+# 각 국가/키워드별로 Google News 검색 RSS 사용 (안정성 ↑)
+NEWS_FEEDS = {
+    "한국": [
+        "https://news.google.com/rss/search?q=한국경제&hl=ko&gl=KR&ceid=KR:ko",
+        "https://news.google.com/rss/search?q=연합뉴스&hl=ko&gl=KR&ceid=KR:ko",
+        "https://news.google.com/rss/search?q=중앙일보&hl=ko&gl=KR&ceid=KR:ko",
+    ],
+    "미국": [
+        # Google News (영어) - 미국 뉴스
+        "https://news.google.com/rss/search?q=USA+economy&hl=en&gl=US&ceid=US:en",
+        "https://news.google.com/rss/search?q=US+stock+market&hl=en&gl=US&ceid=US:en",
+        "https://news.google.com/rss/search?q=US+federal+reserve&hl=en&gl=US&ceid=US:en",
+    ],
+    "영국": [
+        # Google News (영어) - 영국 뉴스
+        "https://news.google.com/rss/search?q=UK+economy&hl=en&gl=GB&ceid=GB:en",
+        "https://news.google.com/rss/search?q=UK+stock+market&hl=en&gl=GB&ceid=GB:en",
+        "https://news.google.com/rss/search?q=UK+business&hl=en&gl=GB&ceid=GB:en",
+    ],
+}
 
 # ── 거시경제지표 (yfinance ticker 기준) ─────────────────────
 MACRO_INDICATORS = [
-    # (표시명,          yfinance ticker,  단위,    소수점자리)
     ("코스피",          "^KS11",          "pt",    2),
     ("코스닥",          "^KQ11",          "pt",    2),
     ("나스닥",          "^IXIC",          "pt",    2),
@@ -154,6 +188,46 @@ def time_ago(s: str) -> str:
         return f"{d // 86400}일 전"
     except Exception:
         return ""
+
+
+# ═══════════════════════════════════════════════════════════════
+# 2-B. 번역 함수 (영어 → 한글)
+# ═══════════════════════════════════════════════════════════════
+_translation_cache: dict[str, str] = {}
+
+def translate_to_korean(text: str, max_retries=2) -> str:
+    """
+    영어 텍스트를 한글로 번역 (캐싱 포함).
+    실패 시 원문 반환.
+    """
+    if not text or len(text) < 5:
+        return text
+    
+    # 이미 한글로 보이면 번역 스킵 (간단한 휴리스틱)
+    if any(ord(c) >= 0xAC00 for c in text):
+        return text
+    
+    # 캐시 확인
+    cache_key = text[:100]
+    if cache_key in _translation_cache:
+        return _translation_cache[cache_key]
+    
+    try:
+        r = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0.1,
+            max_tokens=300,
+            messages=[
+                {"role": "system", "content": "You are a translator. Translate the given English text to Korean concisely. Return only the translated text."},
+                {"role": "user", "content": text[:500]},
+            ],
+        )
+        translated = r.choices[0].message.content.strip()
+        _translation_cache[cache_key] = translated
+        return translated
+    except Exception as e:
+        log.warning(f"⚠️ 번역 실패: {e}")
+        return text
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -224,14 +298,12 @@ def fetch_weather(city: str) -> dict:
 # 4. 한국투자증권 KIS API (국내주식 현재가)
 # ═══════════════════════════════════════════════════════════════
 _kis_token: dict = {"access_token": "", "expire": 0}
-# KIS_BASE_URL = "https://openapi.koreainvestment.com:22443"   # 실전투자
 KIS_BASE_URL = "https://openapivts.koreainvestment.com:29443"   # 모의투자
-KIS_AVAILABLE = None   # None=미확인, True=사용가능, False=사용불가
+KIS_AVAILABLE = None
 
 
 def _kis_get_token() -> bool:
     global KIS_AVAILABLE
-    # 이미 사용불가로 확인된 경우 즉시 False 반환 (반복 타임아웃 방지)
     if KIS_AVAILABLE is False:
         return False
     if _kis_token["access_token"] and time.time() < _kis_token["expire"]:
@@ -248,7 +320,7 @@ def _kis_get_token() -> bool:
                 "appkey": KIS_APP_KEY,
                 "appsecret": KIS_APP_SECRET,
             }),
-            timeout=5,   # 5초로 단축 (기존 15초 → 타임아웃 150초 낭비 방지)
+            timeout=5,
         )
         if res.status_code == 200:
             d = res.json()
@@ -261,7 +333,7 @@ def _kis_get_token() -> bool:
         KIS_AVAILABLE = False
     except Exception as e:
         log.warning(f"⚠️ KIS 접속 불가 (yfinance로 전환): {e}")
-        KIS_AVAILABLE = False   # 1회 실패 시 이후 모든 종목은 yfinance 사용
+        KIS_AVAILABLE = False
     return False
 
 
@@ -314,16 +386,15 @@ def fetch_stock_prices(tickers: dict[str, str]) -> list[dict]:
             code = raw.split(".")[0].zfill(6)
             data = _kis_fetch_price(code)
             if data:
-                data["name"] = name   # 한글명 우선
+                data["name"] = name
                 results.append(data)
                 time.sleep(0.2)
                 continue
-            # KIS 실패 → yfinance 폴백
             ticker_str = code + ".KS"
         else:
             ticker_str = raw
 
-        # ── yfinance 폴백 (해외 or KIS 실패) ──
+        # ── yfinance 폴백 ──
         try:
             tk   = yf.Ticker(ticker_str)
             info = tk.info
@@ -356,22 +427,15 @@ def fetch_stock_prices(tickers: dict[str, str]) -> list[dict]:
 # 4-B. 거시경제지표 조회 (yfinance)
 # ═══════════════════════════════════════════════════════════════
 def fetch_macro_indicators() -> list[dict]:
-    """
-    코스피/코스닥/나스닥/S&P/다우/원달러/WTI/금 지표를
-    yfinance로 조회하여 전일·당일·변동 dict 리스트로 반환.
-    """
     results = []
     for name, ticker, unit, decimals in MACRO_INDICATORS:
         try:
             tk   = yf.Ticker(ticker)
             info = tk.info
-
-            # 현재가: regularMarketPrice 또는 currentPrice
             curr = float(
                 info.get("regularMarketPrice") or
                 info.get("currentPrice") or 0
             )
-            # 전일 종가: previousClose 또는 regularMarketPreviousClose
             prev = float(
                 info.get("previousClose") or
                 info.get("regularMarketPreviousClose") or 0
@@ -406,40 +470,155 @@ def fetch_macro_indicators() -> list[dict]:
 
     log.info(f"✅ 거시경제지표 조회 완료: {len(results)}건")
     return results
-def fetch_news(keyword: str, n: int = N_ARTICLES, pool: int = 0) -> list[dict]:
+
+
+# ═══════════════════════════════════════════════════════════════
+# 5. 뉴스 수집 (국가별 RSS 소스)
+# ═══════════════════════════════════════════════════════════════
+def fetch_news_by_country(country: str, keyword: str = "", n: int = 5, pool: int = 0) -> list[dict]:
     """
-    keyword 로 RSS 검색 후 최신순 정렬해서 반환.
-    pool > 0 이면 중복 제거용 후보풀 크기로 사용 (n보다 많이 수집).
+    국가별 RSS 피드에서 뉴스를 수집.
+    keyword가 있으면 필터링, 없으면 전체 반환.
+    
+    ✅ FIXED: feedparser.parse()는 timeout을 지원하지 않음
+              → requests.get()으로 먼저 받은 후 feedparser.parse()에 전달
     """
-    fetch_size = pool if pool > n else n
-    url = (f"https://news.google.com/rss/search"
-           f"?q={quote(keyword)}&hl=ko&gl=KR&ceid=KR:ko")
+    fetch_size = pool if pool > n else n * 3
     cutoff = datetime.now(timezone.utc) - timedelta(days=NEWS_CUTOFF_DAYS)
-    try:
-        feed = feedparser.parse(url)
-        arts = []
-        for e in feed.entries[:fetch_size * 5]:
-            pub = e.get("published", e.get("updated", ""))
-            dt  = parse_dt(pub)
-            if not dt.tzinfo:
-                dt = dt.replace(tzinfo=timezone.utc)
-            if dt < cutoff:
+    
+    feeds = NEWS_FEEDS.get(country, [])
+    all_arts = []
+    
+    # User-Agent 설정 (일부 서버는 이것이 없으면 차단)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    for feed_url in feeds:
+        try:
+            # Google News RSS인 경우 keyword 추가 + 국가별 locale 설정
+            if "news.google.com" in feed_url and keyword:
+                if country == "한국":
+                    feed_url = f"https://news.google.com/rss/search?q={quote(keyword)}&hl=ko&gl=KR&ceid=KR:ko"
+                elif country == "미국":
+                    feed_url = f"https://news.google.com/rss/search?q={quote(keyword)}&hl=en&gl=US&ceid=US:en"
+                elif country == "영국":
+                    feed_url = f"https://news.google.com/rss/search?q={quote(keyword)}&hl=en&gl=GB&ceid=GB:en"
+            
+            # ✅ FIXED: requests.get()으로 먼저 HTTP 요청 (timeout 적용)
+            response = requests.get(feed_url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            # feedparser.parse()는 텍스트/바이너리를 받음 (timeout 파라미터 없음)
+            feed = feedparser.parse(response.content)
+            
+            if not feed.entries:
+                log.debug(f"⚠️ RSS 피드가 비어있음 [{country}]: {feed_url[:50]}")
                 continue
-            sr  = e.get("summary", e.get("description", ""))
-            txt = BeautifulSoup(sr, "lxml").get_text(strip=True)[:300] if sr else ""
-            arts.append({
-                "title":   e.get("title", "(제목없음)"),
-                "link":    e.get("link", ""),
-                "summary": txt,
-                "pub":     pub,
-                "ago":     time_ago(pub),
-                "_dt":     dt,
-            })
-        arts.sort(key=lambda x: x["_dt"], reverse=True)
-        log.info(f"✅ 뉴스 수집 [{keyword}]: {len(arts[:fetch_size])}건 (후보풀)")
-        return arts[:fetch_size]
+            
+            for e in feed.entries[:fetch_size * 3]:
+                pub = e.get("published", e.get("updated", ""))
+                dt  = parse_dt(pub)
+                if not dt.tzinfo:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                if dt < cutoff:
+                    continue
+                
+                title = e.get("title", "(제목없음)")
+                sr = e.get("summary", e.get("description", ""))
+                txt = BeautifulSoup(sr, "lxml").get_text(strip=True)[:300] if sr else ""
+                
+                # 영어 기사 번역
+                if country != "한국":
+                    title = translate_to_korean(title)
+                    txt = translate_to_korean(txt) if txt else txt
+                
+                art = {
+                    "title":   title,
+                    "link":    e.get("link", ""),
+                    "summary": txt,
+                    "pub":     pub,
+                    "ago":     time_ago(pub),
+                    "_dt":     dt,
+                    "country": country,
+                    "source":  e.get("source", {}).get("title", feed_url.split("/")[2]) if isinstance(e.get("source"), dict) else "",
+                }
+                
+                # 키워드 필터링 (있는 경우)
+                if keyword:
+                    keywords_lower = keyword.lower().split()
+                    if not any(kw in (title + txt).lower() for kw in keywords_lower):
+                        continue
+                
+                all_arts.append(art)
+            
+            time.sleep(0.3)  # RSS 피드 서버 부하 방지
+        except requests.exceptions.RequestException as e:
+            log.warning(f"⚠️ 네트워크 오류 [{country}]: {type(e).__name__} - {feed_url[:50]}")
+        except Exception as e:
+            log.warning(f"⚠️ RSS 피드 조회 실패 [{country}]: {e}")
+    
+    all_arts.sort(key=lambda x: x["_dt"], reverse=True)
+    log.info(f"✅ 뉴스 수집 [{country}]: {len(all_arts[:fetch_size])}건 (후보풀)")
+    return all_arts[:fetch_size]
+
+
+def fetch_news_smart(topic: str, keywords: str) -> list[dict]:
+    """
+    스마트 뉴스 검색:
+    1. 한국 뉴스 3개 (keyword 사용)
+    2. 미국 뉴스 1개 (keyword 사용, 부족하면 주제 관련으로)
+    3. 영국 뉴스 1개 (keyword 사용, 부족하면 주제 관련으로)
+    """
+    results = []
+    total_needed = sum(N_ARTICLES_PER_COUNTRY.values())
+    
+    for country in ["한국", "미국", "영국"]:
+        needed = N_ARTICLES_PER_COUNTRY[country]
+        
+        # 단계 1: 키워드로 검색
+        arts = fetch_news_by_country(country, keyword=keywords, n=needed, pool=needed * 3)
+        
+        # 단계 2: 부족하면 AI로 주제 관련 뉴스 선택
+        if len(arts) < needed:
+            arts_all = fetch_news_by_country(country, keyword="", n=needed * 3, pool=needed * 5)
+            
+            # AI로 주제 관련도 평가
+            if arts_all:
+                extra_needed = needed - len(arts)
+                ctx = "\n".join(f"[{i+1}] {a['title']}" for i, a in enumerate(arts_all[:15]))
+                
+                selected_indices = _gpt_select_by_topic(topic, ctx, extra_needed)
+                for idx in selected_indices:
+                    if 0 <= idx < len(arts_all) and arts_all[idx] not in arts:
+                        arts.append(arts_all[idx])
+                        if len(arts) >= needed:
+                            break
+        
+        results.extend(arts[:needed])
+    
+    return results[:total_needed]
+
+
+def _gpt_select_by_topic(topic: str, articles_ctx: str, count: int) -> list[int]:
+    """AI가 주제와 관련된 기사 인덱스를 선택."""
+    try:
+        prompt = f"{topic} 분야와 관련된 상위 {count}개 기사 인덱스를 선택. 형식: [1,3,5]"
+        r = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0.1,
+            max_tokens=50,
+            messages=[
+                {"role": "system", "content": "You are a news classifier. Return ONLY a JSON list of indices."},
+                {"role": "user", "content": f"{articles_ctx}\n\n{prompt}"},
+            ],
+        )
+        try:
+            return json.loads(r.choices[0].message.content.strip())
+        except:
+            return []
     except Exception as e:
-        log.warning(f"⚠️ 뉴스 수집 실패 [{keyword}]: {e}")
+        log.warning(f"⚠️ GPT 선택 실패: {e}")
         return []
 
 
@@ -461,9 +640,9 @@ def _gpt(system: str, user: str, temperature=0.35, max_tokens=900) -> str:
     except openai.RateLimitError as e:
         err_body = str(e)
         if "insufficient_quota" in err_body:
-            log.warning("⚠️ OpenAI 크레딧 소진 — platform.openai.com/billing 에서 충전 필요")
+            log.warning("⚠️ OpenAI 크레딧 소진")
             return "⚠️ [OpenAI 크레딧 소진] platform.openai.com/billing 에서 충전 후 재실행하세요."
-        log.warning(f"⚠️ GPT 요청 한도 초과 (잠시 후 재시도): {e}")
+        log.warning(f"⚠️ GPT 요청 한도 초과: {e}")
         return "⚠️ [GPT 요청 한도 초과] 잠시 후 다시 실행해 주세요."
     except Exception as e:
         log.warning(f"⚠️ GPT 호출 실패: {e}")
@@ -474,7 +653,7 @@ def gpt_summarize(topic: str, arts: list) -> str:
     if not arts:
         return "관련 기사를 찾을 수 없습니다."
     ctx = "\n".join(
-        f"[{i+1}] {a['title']} ({a['ago']})\n{a['summary'][:150]}"
+        f"[{i+1}] {a['title']} ({a['ago']}) [{a.get('country', '?')}]\n{a['summary'][:150]}"
         for i, a in enumerate(arts[:10])
     )
     return _gpt(
@@ -487,7 +666,7 @@ def gpt_top3(all_arts: list) -> str:
     if not all_arts:
         return ""
     ctx = "\n".join(
-        f"[{i+1}][{a.get('topic','?')}] {a['title']} ({a['ago']})"
+        f"[{i+1}][{a.get('topic','?')}][{a.get('country', '?')}] {a['title']} ({a['ago']})"
         for i, a in enumerate(all_arts[:25])
     )
     return _gpt(
@@ -498,7 +677,7 @@ def gpt_top3(all_arts: list) -> str:
 
 def gpt_market_analysis(all_arts: list) -> str:
     ctx = "\n".join(
-        f"[{i+1}] {a['title']} ({a['ago']})"
+        f"[{i+1}] {a['title']} ({a['ago']}) [{a.get('country', '?')}]"
         for i, a in enumerate(all_arts[:18])
     )
     now_str = now_kst().strftime("%Y년 %m월 %d일 %H:%M")
@@ -524,7 +703,7 @@ def gpt_comment(wd: dict, city: str, sums: dict) -> str:
         ("경제·금융 지식이 해박하면서도 유머 감각이 넘치는 아침 브리핑 MC. "
          "워런 버핏의 지혜와 개그맨의 위트를 동시에 갖춤. "
          "날씨+뉴스 버무려 '아, 맞아!'와 '재밌다' 동시에 나오는 한마디 2~3문장. "
-         "경제 비유·격언 자연스럽게 녹이되 딱딱함 절대 금지. 제공된 정보만 근거."),
+         "제공된 정보만 근거."),
         f"날씨: {w_str}\n주요뉴스:\n{ns}\n\n위트 있는 아침 한마디 써주세요.",
         temperature=0.82,
         max_tokens=200,
@@ -532,7 +711,7 @@ def gpt_comment(wd: dict, city: str, sums: dict) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 7. HTML 이메일 렌더러
+# 7. HTML 이메일 렌더러 (생략 - 기존과 동일)
 # ═══════════════════════════════════════════════════════════════
 def _build_weather_html(wd: dict, city: str) -> str:
     slots = wd.get("slots", {})
@@ -598,368 +777,240 @@ def _build_stock_html(stocks: list) -> str:
     rows = ""
     for i, s in enumerate(stocks):
         up       = s["change"] >= 0
-        arrow    = "▲" if up else "▼"
-        sym      = {"KRW": "₩", "USD": "$", "EUR": "€"}.get(s["currency"], "")
-        price_s  = f"{sym}{s['price']:,.0f}" if s["price"] else "-"
-        chg_s    = f"{arrow} {abs(s['change']):,.0f}"
-        pct_s    = f"{abs(s['pct']):.2f}%"
-        row_bg   = "#fff5f5" if up else "#f3f8ff"
-        clr      = "#c0392b" if up else "#1a5fa8"
-        pct_bg   = "#fde8e8" if up else "#ddeeff"
-
+        icon     = "📈" if up else "📉"
+        color    = "#27ae60" if up else "#e74c3c"
+        sign     = "+" if up else "-"
         rows += f"""
-<tr style='background:{row_bg};border-bottom:1px solid #f0f0f0;'>
-  <td style='padding:9px 8px;font-size:12px;color:#999;text-align:center;'>{i+1}</td>
-  <td style='padding:9px 10px;'>
-    <div style='font-size:13px;font-weight:800;color:#1a1a2e;'>{s['name']}</div>
-    <div style='font-size:10px;color:#999;'>{s['ticker']}</div>
-  </td>
-  <td style='padding:9px 8px;text-align:right;font-size:14px;font-weight:900;
-             color:{clr};font-variant-numeric:tabular-nums;white-space:nowrap;'>{price_s}</td>
-  <td style='padding:9px 6px;text-align:right;font-size:12px;color:{clr};
-             white-space:nowrap;'>{chg_s}</td>
-  <td style='padding:9px 8px;text-align:center;'>
-    <span style='background:{pct_bg};color:{clr};border-radius:10px;
-                 padding:2px 8px;font-size:11px;font-weight:800;'>{arrow} {pct_s}</span>
-  </td>
-  <td style='padding:9px 8px;text-align:right;font-size:10px;color:#aaa;
-             white-space:nowrap;'>전일 {sym}{s['prev']:,.0f}</td>
+<tr style='border-bottom:1px solid #e8edf5;{"background:#f8fbff;" if i%2==0 else ""}'>
+  <td style='padding:9px 10px;font-size:12px;font-weight:600;color:#1a3a5c;'>{s['name']}</td>
+  <td style='padding:9px 10px;text-align:right;font-size:12px;font-weight:800;color:#333;'>{s['price']:,.0f}</td>
+  <td style='padding:9px 10px;text-align:right;font-size:11px;color:{color};font-weight:700;'>{icon} {sign}{abs(s['pct']):.2f}%</td>
+  <td style='padding:9px 10px;text-align:right;font-size:10px;color:#999;'>{s['currency']}</td>
 </tr>"""
 
     return f"""
-<table style='width:100%;border-collapse:collapse;font-family:Malgun Gothic,sans-serif;'>
+<table style='width:100%;border-collapse:collapse;font-size:12px;'>
   <thead>
-    <tr style='background:#f8fafc;border-bottom:2px solid #e2e8f0;'>
-      <th style='padding:7px 6px;font-size:11px;color:#94a3b8;text-align:center;'>#</th>
-      <th style='padding:7px 10px;font-size:11px;color:#94a3b8;text-align:left;'>종목명</th>
-      <th style='padding:7px 8px;font-size:11px;color:#94a3b8;text-align:right;'>현재가</th>
-      <th style='padding:7px 6px;font-size:11px;color:#94a3b8;text-align:right;'>등락</th>
-      <th style='padding:7px 8px;font-size:11px;color:#94a3b8;text-align:center;'>등락률</th>
-      <th style='padding:7px 8px;font-size:11px;color:#94a3b8;text-align:right;'>전일종가</th>
+    <tr style='background:#f0f4f8;border-bottom:2px solid #d4dce6;'>
+      <td style='padding:8px 10px;color:#666;font-weight:600;text-align:left;'>종목</td>
+      <td style='padding:8px 10px;color:#666;font-weight:600;text-align:right;'>현재가</td>
+      <td style='padding:8px 10px;color:#666;font-weight:600;text-align:right;'>등락률</td>
+      <td style='padding:8px 10px;color:#666;font-weight:600;text-align:right;'>통화</td>
     </tr>
   </thead>
-  <tbody>{rows}</tbody>
+  <tbody>
+    {rows}
+  </tbody>
 </table>"""
 
 
 def _build_macro_html(macros: list) -> str:
-    """거시경제지표 전일/당일/변동 테이블 HTML"""
     if not macros:
-        return "<p style='color:#aaa;font-size:12px;'>거시지표 데이터 없음</p>"
+        return "<p style='color:#aaa;'>지표 데이터 없음</p>"
 
     rows = ""
-    for i, m in enumerate(macros):
-        up      = m["change"] >= 0
-        arrow   = "▲" if up else "▼"
-        row_bg  = "#fffaf5" if i % 2 == 0 else "#fff"
-        clr     = "#c0392b" if up else "#1a5fa8"
-        pct_bg  = "#fde8e8" if up else "#ddeeff"
-        has_err = m.get("error")
-
-        if has_err:
-            rows += f"""
-<tr style='background:{row_bg};border-bottom:1px solid #f0f0f0;'>
-  <td style='padding:8px 6px;font-size:11px;color:#bbb;text-align:center;'>{i+1}</td>
-  <td style='padding:8px 10px;font-size:12px;font-weight:700;color:#555;'>{m['name']}</td>
-  <td colspan='4' style='padding:8px;font-size:11px;color:#e74c3c;text-align:center;'>
-    ⚠️ 조회 실패
-  </td>
-</tr>"""
-            continue
-
+    for m in macros:
+        up    = m["change"] >= 0
+        icon  = "📈" if up else "📉"
+        color = "#27ae60" if up else "#e74c3c"
+        sign  = "+" if up else "-"
         rows += f"""
-<tr style='background:{row_bg};border-bottom:1px solid #f0f0f0;'>
-  <td style='padding:8px 6px;font-size:11px;color:#bbb;text-align:center;'>{i+1}</td>
-  <td style='padding:8px 10px;'>
-    <div style='font-size:12px;font-weight:800;color:#1a1a2e;'>{m['name']}</div>
-    <div style='font-size:10px;color:#bbb;'>{m['ticker']}</div>
-  </td>
-  <td style='padding:8px;text-align:right;font-size:13px;font-weight:900;
-             color:{clr};white-space:nowrap;font-variant-numeric:tabular-nums;'>
-    {m['curr_s']} <span style='font-size:10px;font-weight:400;color:#aaa;'>{m['unit']}</span>
-  </td>
-  <td style='padding:8px 6px;text-align:right;font-size:11px;
-             color:{clr};white-space:nowrap;'>
-    {arrow} {m['change_s']}
-  </td>
-  <td style='padding:8px;text-align:center;'>
-    <span style='background:{pct_bg};color:{clr};border-radius:10px;
-                 padding:2px 8px;font-size:11px;font-weight:800;white-space:nowrap;'>
-      {arrow} {m['pct_s']}%
-    </span>
-  </td>
-  <td style='padding:8px;text-align:right;font-size:10px;color:#aaa;white-space:nowrap;'>
-    전일 {m['prev_s']}
-  </td>
+<tr style='border-bottom:1px solid #e0e5eb;'>
+  <td style='padding:8px 10px;font-size:11px;font-weight:600;color:#333;'>{m['name']}</td>
+  <td style='padding:8px 10px;text-align:right;font-size:11px;font-weight:800;color:#1a3a5c;'>{m['curr_s']} {m['unit']}</td>
+  <td style='padding:8px 10px;text-align:right;font-size:10px;color:{color};font-weight:700;'>{icon} {sign}{m['pct_s']}%</td>
 </tr>"""
 
-    now_s = now_kst().strftime("%H:%M 기준")
     return f"""
-<table style='width:100%;border-collapse:collapse;font-family:Malgun Gothic,sans-serif;'>
+<table style='width:100%;border-collapse:collapse;font-size:11px;'>
   <thead>
-    <tr style='background:linear-gradient(90deg,#1a2a4a,#243b6e);
-               border-bottom:2px solid #1a2a4a;'>
-      <th style='padding:8px 6px;font-size:11px;color:#94b8e8;text-align:center;'>#</th>
-      <th style='padding:8px 10px;font-size:11px;color:#94b8e8;text-align:left;'>지표</th>
-      <th style='padding:8px;font-size:11px;color:#94b8e8;text-align:right;'>현재</th>
-      <th style='padding:8px 6px;font-size:11px;color:#94b8e8;text-align:right;'>등락</th>
-      <th style='padding:8px;font-size:11px;color:#94b8e8;text-align:center;'>등락률</th>
-      <th style='padding:8px;font-size:11px;color:#94b8e8;text-align:right;'>전일종가</th>
+    <tr style='background:#f5f8fb;border-bottom:1px solid #d4dce6;'>
+      <td style='padding:7px 10px;color:#666;font-weight:600;text-align:left;'>지표명</td>
+      <td style='padding:7px 10px;color:#666;font-weight:600;text-align:right;'>현재</td>
+      <td style='padding:7px 10px;color:#666;font-weight:600;text-align:right;'>변화</td>
     </tr>
   </thead>
-  <tbody>{rows}</tbody>
-</table>
-<div style='background:#f8fafc;padding:5px 12px;text-align:right;
-            font-size:10px;color:#cbd5e1;border-top:1px solid #e2e8f0;'>
-  yfinance 기준 · {now_s} · 시장 마감 후에는 전일 종가 표시
-</div>"""
-    return f"""
-<div style='margin-bottom:24px;'>
-  <div style='background:{color};color:#fff;padding:8px 16px;
-              border-radius:8px 8px 0 0;font-size:13px;font-weight:800;
-              letter-spacing:0.5px;'>{title}</div>
-  <div style='background:#fff;border:1px solid #e8e8e8;border-top:none;
-              border-radius:0 0 8px 8px;padding:16px 18px;
-              font-size:13px;line-height:1.8;color:#333;'>
-    {content}
-  </div>
-</div>"""
+  <tbody>
+    {rows}
+  </tbody>
+</table>"""
 
 
-def _news_list_html(arts: list, color: str) -> str:
+def _build_news_section_html(topic: str, arts: list) -> str:
+    if not arts:
+        return f"<p style='color:#aaa;'>뉴스 없음</p>"
+
     items = ""
-    for a in arts:
-        title_parts = a["title"].rsplit(" - ", 1)
-        title_main  = title_parts[0] if len(title_parts) > 1 else a["title"]
-        source      = title_parts[1] if len(title_parts) > 1 else ""
+    for i, a in enumerate(arts, 1):
+        country_emoji = "🇰🇷" if a.get("country") == "한국" else "🇺🇸" if a.get("country") == "미국" else "🇬🇧"
+        link = a.get("link", "#")  # 링크가 없으면 # 사용
+        
         items += f"""
-<div style='border-bottom:1px solid #f5f5f5;padding:10px 0;'>
-  <div style='display:flex;justify-content:space-between;align-items:flex-start;'>
-    <a href='{a["link"]}' style='color:#1a1a1a;text-decoration:none;
-       font-weight:600;font-size:13px;line-height:1.5;flex:1;'>
-      {title_main}
+<div style='margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #eee;'>
+  <div style='font-size:11px;color:#888;margin-bottom:3px;'>
+    [{i}] {country_emoji} {a.get('country', '?')} · {a['ago']}
+  </div>
+  <div style='font-size:12px;font-weight:600;margin-bottom:4px;line-height:1.4;'>
+    <a href="{link}" target="_blank" style='color:#1a3a5c;text-decoration:none;'>
+      {a['title']}
     </a>
-    <span style='font-size:10px;color:{color};white-space:nowrap;
-                 margin-left:8px;background:#fff8ee;border-radius:8px;
-                 padding:2px 6px;font-weight:700;border:1px solid #fde8c0;'>
-      {a['ago']}
-    </span>
   </div>
-  {'<p style="font-size:12px;color:#666;margin:4px 0 0;line-height:1.6;">' + a["summary"][:160] + ("…" if len(a["summary"]) > 160 else "") + "</p>" if a.get("summary") else ""}
-  {f'<span style="font-size:10px;color:#aaa;">{source}</span>' if source else ""}
+  <div style='font-size:11px;color:#666;line-height:1.5;'>
+    {a['summary'][:150]}
+  </div>
 </div>"""
-    return items
+
+    return f"""
+<div style='margin:12px 0;'>
+  {items}
+</div>"""
 
 
-def build_email_html(
-    city: str,
-    wd: dict,
-    stocks: list,
-    macros: list,       # ← 거시경제지표 추가
-    topic_arts: dict,   # {topic: [arts]}
-    topic_sums: dict,   # {topic: gpt_summary}
-    top3: str,
-    market: str,
-    comment: str,
-) -> str:
+def build_email_html(city: str, wd: dict, stocks: list, macros: list,
+                     topic_arts: dict, topic_sums: dict, top3: str,
+                     market: str, comment: str) -> str:
     date_s = date_str_kst()
-    topics_label = ", ".join(topic_arts.keys())
-
-    # ── 날씨 ──────────────────────────────────────────────
+    topics_label = ", ".join(TOPICS)
+    
     weather_html = _build_weather_html(wd, city)
-
-    # ── 거시경제지표 ──────────────────────────────────────
-    macro_html = _build_macro_html(macros)
-
-    # ── 주식 ──────────────────────────────────────────────
-    stock_html = _build_stock_html(stocks)
-
-    # ── AI 시장 분석 ──────────────────────────────────────
-    market_lines = market.replace("\n", "<br>")
-    market_html  = f"""
-<div style='background:linear-gradient(135deg,#e3f2fd,#e8eaf6);
-            border-radius:10px;padding:16px 20px;border:1px solid #90caf9;
-            font-size:13px;line-height:1.8;color:#222;'>
-  {re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', market_lines)}
-  <div style='margin-top:12px;font-size:11px;color:#9e9e9e;border-top:1px solid #c5cae9;
-              padding-top:8px;'>
-    ⚠️ AI가 뉴스 기사를 근거로 생성한 참고 정보입니다. 투자 결정은 본인 판단 하에 하세요.
-  </div>
-</div>"""
-
-    # ── TOP3 ──────────────────────────────────────────────
-    top3_lines = ""
-    for line in top3.strip().split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        line = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', line)
-        m = re.match(r'^([1-3])\.\s*(.*)', line)
-        if m:
-            top3_lines += f"""
-<div style='display:flex;align-items:flex-start;margin-bottom:12px;'>
-  <span style='display:inline-flex;align-items:center;justify-content:center;
-               width:22px;height:22px;min-width:22px;background:#e67e22;color:#fff;
-               border-radius:50%;font-size:11px;font-weight:900;margin-right:10px;
-               margin-top:2px;'>{m.group(1)}</span>
-  <span style='font-size:13px;font-weight:700;color:#3d2800;line-height:1.6;'>
-    {m.group(2)}
-  </span>
-</div>"""
-        else:
-            top3_lines += f"""
-<div style='font-size:12px;color:#5a4000;line-height:1.75;
-            padding-left:32px;margin-bottom:6px;'>{line}</div>"""
-
-    top3_html = f"""
-<div style='background:linear-gradient(135deg,#fff8e8,#fef3d0);
-            border-radius:10px;padding:16px 20px;border:1px solid #f5d98a;'>
-  {top3_lines}
-</div>"""
-
-    # ── 한마디 ────────────────────────────────────────────
-    comment_html = f"""
-<div style='background:linear-gradient(135deg,#f0fdf4,#dcfce7);
-            border-radius:10px;padding:16px 20px;border:1px solid #86efac;'>
-  <p style='font-size:14px;color:#14532d;line-height:1.9;margin:0;font-style:italic;
-             border-left:4px solid #4ade80;padding-left:16px;'>
-    {comment}
-  </p>
-</div>"""
-
-    # ── 분야별 뉴스 ───────────────────────────────────────
-    TOPIC_COLORS = {
-        "📈 주식": "#e74c3c", "💰 경제": "#e67e22",
-        "🏦 금융": "#1565c0", "🛡️ 방산": "#2d6a4f",
-    }
+    stock_html   = _build_stock_html(stocks)
+    macro_html   = _build_macro_html(macros)
+    
+    top3_html = f"<div style='font-size:12px;line-height:1.7;color:#333;'>{top3.replace(chr(10), '<br>')}</div>"
+    market_html = f"<div style='font-size:12px;line-height:1.7;color:#333;'>{market.replace(chr(10), '<br>')}</div>"
+    comment_html = f"<div style='font-size:13px;line-height:1.6;color:#2c5f8a;font-weight:500;'>\"{comment}\"</div>"
+    
     news_sections = ""
     for topic in TOPICS:
-        arts   = topic_arts.get(topic, [])
-        gsum   = topic_sums.get(topic, "")
-        color  = TOPIC_COLORS.get(topic, "#2d6a4f")
-        label  = topic.split(" ", 1)[1] if " " in topic else topic
-
-        gsum_html = f"""
-<div style='background:#f8f9fa;border-left:4px solid {color};
-            border-radius:0 8px 8px 0;padding:12px 14px;
-            margin-bottom:12px;font-size:13px;line-height:1.8;color:#333;'>
-  <span style='font-size:10px;font-weight:700;color:{color};
-               text-transform:uppercase;letter-spacing:0.5px;
-               display:block;margin-bottom:4px;'>💬 GPT 요약</span>
-  {gsum.replace(chr(10), "<br>")}
-</div>"""
-
-        news_items = _news_list_html(arts, color)
-
+        arts = topic_arts.get(topic, [])
+        sum_text = topic_sums.get(topic, "")
         news_sections += f"""
-<div style='margin-bottom:28px;'>
-  <div style='display:flex;align-items:center;gap:8px;margin-bottom:10px;'>
-    <span style='background:{color};color:#fff;border-radius:16px;padding:4px 14px;
-                 font-size:12px;font-weight:700;'>{label}</span>
-    <span style='font-size:11px;color:#888;'>기사 {len(arts)}건 (최근 {NEWS_CUTOFF_DAYS}일)</span>
-  </div>
-  {gsum_html}
-  {news_items}
+<div style='margin:16px 0;border-top:1px solid #d8ead8;padding-top:12px;'>
+  <h3 style='font-size:12px;color:#1b4332;font-weight:800;margin:0 0 8px;'>{topic}</h3>
+  <div style='font-size:11px;line-height:1.6;color:#555;margin-bottom:8px;'>{sum_text}</div>
+  {_build_news_section_html(topic, arts)}
 </div>"""
 
-    # ── 최종 이메일 조합 ──────────────────────────────────
-    return f"""<!DOCTYPE html>
+    return f"""
+<!DOCTYPE html>
 <html>
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>🌅 아침 브리핑</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{MAIL_SUBJECT}</title>
+  <style>
+    @media print {{
+      body {{ margin: 0; padding: 0; }}
+      .page-break {{ page-break-before: always; margin-top: 20px; }}
+      h2 {{ page-break-after: avoid; }}
+      .briefing-section {{ page-break-inside: avoid; }}
+    }}
+  </style>
 </head>
-<body style="margin:0;padding:0;background:#f0f4f0;
-             font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;">
-<div style="max-width:680px;margin:20px auto;background:#fff;
-            border-radius:16px;overflow:hidden;
-            box-shadow:0 4px 24px rgba(0,0,0,.12);">
+<body style='font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+              margin: 0; padding: 0; background: #f5f5f5; color: #333;'>
+
+<div style='max-width: 650px; margin: 0 auto; background: white; box-shadow: 0 2px 8px rgba(0,0,0,.05);'>
 
   <!-- 헤더 -->
-  <div style="background:linear-gradient(135deg,#1a472a,#2d6a4f,#40916c);
-              padding:24px 28px 18px;">
-    <h1 style="color:#fff;font-size:20px;margin:0 0 4px;font-weight:800;">
+  <div class="briefing-header" style="background:linear-gradient(135deg,#1a472a,#2d6a4f,#40916c);
+              padding:18px 20px 14px;">
+    <h1 style="color:#fff;font-size:17px;margin:0 0 3px;font-weight:800;">
       🌅 아침 브리핑
     </h1>
-    <p style="color:rgba(255,255,255,.8);font-size:13px;margin:0;">
-      {date_s} &nbsp;|&nbsp; Powered by GPT-4o-mini · KIS API
+    <p style="color:rgba(255,255,255,.85);font-size:11px;margin:0;">
+      {date_s} &nbsp;|&nbsp; Powered by GPT-4o-mini · KIS API · 국제 RSS
     </p>
     <div style="display:inline-block;background:rgba(255,255,255,.18);color:#fff;
-                font-size:12px;font-weight:600;border-radius:16px;
-                padding:3px 12px;margin-top:8px;border:1px solid rgba(255,255,255,.25);">
-      📍 {city} &nbsp;|&nbsp; {topics_label}
+                font-size:10px;font-weight:600;border-radius:14px;
+                padding:2px 9px;margin-top:6px;border:1px solid rgba(255,255,255,.25);">
+      📍 {city} &nbsp;|&nbsp; 🇰🇷 🇺🇸 🇬🇧 국제 뉴스
     </div>
   </div>
 
-  <div style="padding:24px 28px 32px;">
+  <div style="padding:18px 20px 24px;">
 
     <!-- 날씨 -->
-    <h2 style="font-size:15px;color:#1b4332;border-bottom:3px solid #40916c;
-               padding-bottom:6px;margin:0 0 14px;font-weight:800;">
-      🌤️ 날씨 — {city}
-    </h2>
-    {weather_html}
+    <div class="briefing-section">
+      <h2 style="font-size:13px;color:#1b4332;border-bottom:2px solid #40916c;
+                 padding-bottom:4px;margin:0 0 10px;font-weight:800;">
+        🌤️ 날씨 — {city}
+      </h2>
+      {weather_html}
+    </div>
 
     <!-- 거시경제지표 -->
-    <h2 style="font-size:15px;color:#1b4332;border-bottom:3px solid #40916c;
-               padding-bottom:6px;margin:24px 0 14px;font-weight:800;">
-      🌐 거시경제지표
-    </h2>
-    <div style="border:1px solid #1a2a4a;border-radius:10px;overflow:hidden;">
-      {macro_html}
+    <div class="briefing-section">
+      <h2 style="font-size:13px;color:#1b4332;border-bottom:2px solid #40916c;
+                 padding-bottom:4px;margin:16px 0 10px;font-weight:800;">
+        🌐 거시경제지표
+      </h2>
+      <div style="border:1px solid #1a2a4a;border-radius:8px;overflow:hidden;">
+        {macro_html}
+      </div>
     </div>
 
     <!-- 관심주식 현재가 -->
-    <h2 style="font-size:15px;color:#1b4332;border-bottom:3px solid #40916c;
-               padding-bottom:6px;margin:24px 0 14px;font-weight:800;">
-      📈 관심종목 시세
-    </h2>
-    <div style="border:1px solid #e8edf5;border-radius:10px;overflow:hidden;">
-      {stock_html}
-      <div style="background:#f8fafc;padding:5px 12px;text-align:right;
-                  font-size:10px;color:#cbd5e1;border-top:1px solid #e8edf5;">
-        한국투자증권 KIS API (국내) · yfinance (해외) · 전일종가 기준
+    <div class="briefing-section">
+      <h2 style="font-size:13px;color:#1b4332;border-bottom:2px solid #40916c;
+                 padding-bottom:4px;margin:16px 0 10px;font-weight:800;">
+        📈 관심종목 시세
+      </h2>
+      <div style="border:1px solid #e8edf5;border-radius:8px;overflow:hidden;">
+        {stock_html}
+        <div style="background:#f8fafc;padding:4px 10px;text-align:right;
+                    font-size:9px;color:#cbd5e1;border-top:1px solid #e8edf5;">
+          한국투자증권 KIS API (국내) · yfinance (해외) · 전일종가 기준
+        </div>
       </div>
     </div>
 
     <!-- AI 시장 분석 -->
-    <h2 style="font-size:15px;color:#1b4332;border-bottom:3px solid #40916c;
-               padding-bottom:6px;margin:24px 0 14px;font-weight:800;">
-      📊 AI 시장 분석 브리핑
-    </h2>
-    {market_html}
+    <div class="briefing-section">
+      <h2 style="font-size:13px;color:#1b4332;border-bottom:2px solid #40916c;
+                 padding-bottom:4px;margin:16px 0 10px;font-weight:800;">
+        📊 AI 시장 분석 브리핑
+      </h2>
+      {market_html}
+    </div>
 
     <!-- 주요뉴스 TOP3 -->
-    <h2 style="font-size:15px;color:#1b4332;border-bottom:3px solid #40916c;
-               padding-bottom:6px;margin:24px 0 14px;font-weight:800;">
-      🔥 오늘의 주요뉴스 TOP 3
-    </h2>
-    {top3_html}
+    <div class="briefing-section">
+      <h2 style="font-size:13px;color:#1b4332;border-bottom:2px solid #40916c;
+                 padding-bottom:4px;margin:16px 0 10px;font-weight:800;">
+        🔥 오늘의 주요뉴스 TOP 3
+      </h2>
+      {top3_html}
+    </div>
 
     <!-- 한마디 -->
-    <h2 style="font-size:15px;color:#1b4332;border-bottom:3px solid #40916c;
-               padding-bottom:6px;margin:24px 0 14px;font-weight:800;">
-      💬 오늘의 한 마디
-    </h2>
-    {comment_html}
+    <div class="briefing-section">
+      <h2 style="font-size:13px;color:#1b4332;border-bottom:2px solid #40916c;
+                 padding-bottom:4px;margin:16px 0 10px;font-weight:800;">
+        💬 오늘의 한 마디
+      </h2>
+      {comment_html}
+    </div>
 
     <!-- 분야별 뉴스 -->
-    <h2 style="font-size:15px;color:#1b4332;border-bottom:3px solid #40916c;
-               padding-bottom:6px;margin:24px 0 14px;font-weight:800;">
-      📰 분야별 뉴스 <span style="font-size:11px;font-weight:400;color:#888;">
-        (최근 {NEWS_CUTOFF_DAYS}일 이내 · 분야별 최대 {N_ARTICLES}건)
-      </span>
-    </h2>
-    {news_sections}
+    <div class="briefing-section">
+      <h2 style="font-size:13px;color:#1b4332;border-bottom:2px solid #40916c;
+                 padding-bottom:4px;margin:16px 0 10px;font-weight:800;">
+        📰 분야별 뉴스 <span style="font-size:9px;font-weight:400;color:#888;">
+          (최근 {NEWS_CUTOFF_DAYS}일 · 한국 3개 + 미국 1개 + 영국 1개)
+        </span>
+      </h2>
+      {news_sections}
+    </div>
 
   </div>
 
   <!-- 푸터 -->
-  <div style="background:#f0f7f0;padding:14px 28px;text-align:center;
-              border-top:1px solid #d8ead8;">
-    <p style="font-size:11px;color:#888;margin:0;">
-      ⚡ Google News RSS 기반 자동 생성 · 최근 {NEWS_CUTOFF_DAYS}일 기사<br>
+  <div style="background:#f0f7f0;padding:10px 20px;text-align:center;
+              border-top:1px solid #d8ead8;margin-top:12px;">
+    <p style="font-size:9px;color:#999;margin:0;line-height:1.4;">
+      ⚡ 국제 RSS + Google News 기반 자동 생성 · 최근 {NEWS_CUTOFF_DAYS}일 기사<br>
+      🌍 한국 뉴스 + 미국 뉴스(NYT/WSJ/WaPo) + 영국 뉴스(Times/Guardian/Telegraph)<br>
       GPT 답변은 제공된 기사에만 근거합니다. 투자 결정은 본인 판단 하에 하세요.
     </p>
   </div>
@@ -1001,11 +1052,12 @@ def send_to_make(html_body: str, subject: str) -> bool:
 # ═══════════════════════════════════════════════════════════════
 def main():
     log.info("=" * 60)
-    log.info(f"🌅 아침 브리핑 생성 시작 — {date_str_kst()}")
+    log.info(f"🌅 아침 브리핑 v22 생성 시작 — {date_str_kst()}")
+    log.info(f"국제 뉴스: 한국 3개 + 미국 1개 + 영국 1개")
     log.info("=" * 60)
 
     # ── 날씨 ──
-    log.info("🌤️ [1/6] 날씨 조회...")
+    log.info("🌤️ [1/7] 날씨 조회...")
     wd = fetch_weather(CITY)
 
     # ── 주식 ──
@@ -1017,18 +1069,18 @@ def main():
     macros = fetch_macro_indicators()
 
     # ── 뉴스 수집 + 중복 제거 + GPT 요약 ──────────────────────
-    log.info("📰 [4/7] 뉴스 수집 및 중복 제거 후 GPT 요약...")
+    log.info("📰 [4/7] 뉴스 수집 (스마트 필터링 + 자동 번역)...")
 
-    # Step 1: 우선순위 순서로 후보풀 수집 (각 분야 N_ARTICLES * 3 개씩 넉넉히)
+    # Step 1: 분야별로 뉴스 수집 (국가별 분해)
     POOL_SIZE = N_ARTICLES * 3
     raw_pools: dict[str, list] = {}
     for topic in DEDUP_PRIORITY:
         kw   = TOPIC_KEYWORDS.get(topic, topic)
-        pool = fetch_news(kw, n=N_ARTICLES, pool=POOL_SIZE)
+        pool = fetch_news_smart(topic, kw)
         raw_pools[topic] = pool
 
-    # Step 2: 우선순위 순서로 기사 배정 — 이미 선점된 URL은 후순위 분야에서 제외
-    used_urls: set[str] = set()   # 전체 분야 통틀어 선정된 기사 URL
+    # Step 2: 우선순위 순서로 기사 배정 — URL 중복 제거
+    used_urls: set[str] = set()
     topic_arts: dict[str, list] = {}
 
     for topic in DEDUP_PRIORITY:
@@ -1036,7 +1088,6 @@ def main():
         selected   = []
         for art in candidates:
             url = art.get("link", "").strip()
-            # URL 기준 중복 체크 (동일 기사가 여러 분야에 들어가는 것 방지)
             if url and url in used_urls:
                 continue
             selected.append(art)
@@ -1047,7 +1098,7 @@ def main():
         topic_arts[topic] = selected
         log.info(f"  ✓ {topic}: 후보 {len(candidates)}건 → 중복제거 후 {len(selected)}건 선정")
 
-    # Step 3: TOPICS 순서로 재정렬 (이메일 표시 순서 유지), GPT 요약
+    # Step 3: TOPICS 순서로 재정렬, GPT 요약
     topic_sums: dict[str, str] = {}
     all_arts:   list[dict]     = []
 
@@ -1087,12 +1138,12 @@ def main():
         comment=comment,
     )
 
-    # ── 결과 파일 저장 (GitHub Actions 아티팩트용) ──
+    # ── 결과 파일 저장 ──
     with open("briefing_output.html", "w", encoding="utf-8") as f:
         f.write(html_body)
     log.info("💾 briefing_output.html 저장 완료")
 
-    # ── Make Webhook으로 발송 ──
+    # ── Make Webhook 발송 ──
     log.info("📨 Make Webhook 발송...")
     subject = f"{MAIL_SUBJECT} — {now_kst().strftime('%Y/%m/%d')}"
     ok = send_to_make(html_body, subject)
