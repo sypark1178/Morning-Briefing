@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🌅 아침 브리핑 v23 — 4개국 5대 경제신문 + 전문가 분석
+🌅 아침 브리핑 v24 — 6개국 5대 경제신문 + 전문가 분석
 GitHub Actions + Make Webhook 자동 발송
-v23  |  2026-03  |  KST 06:00 매일 실행
+v24  |  2026-03  |  KST 06:00 매일 실행
 
-변경 사항 (v22.2 → v23):
-- 뉴스 소스: 한국/미국/영국/일본 각 5대 경제신문사로 확대
-- 일본 뉴스 추가 (닛케이·니혼게이자이·재팬타임스 등)
-- 분야별 뉴스 10개 (한국 4 + 미국 2 + 영국 2 + 일본 2)
-- 중복 우선순위: 경제 > 금융 > 주식 > 방산
-- GPT 분석 프롬프트: 객관적 사실 기반 최고 전문가 수준으로 강화
-- 번역 범위 확대: 영어·일어 → 한국어
+변경 사항 (v23 → v24):
+- 뉴스 수집국 확대: 4개국 → 6개국 (중국·독일 추가)
+- 중국 5대 경제신문 추가 (人民日報·新华社·南方都市报·财新·第一财经)
+- 독일 5대 경제신문 추가 (Handelsblatt·FAZ·Süddeutsche·Reuters DE·Spiegel Wirtschaft)
+- 분야별 뉴스 10개 → 14개 (중국 2 + 독일 2 추가)
+- 국가별 배분: 한국 4 + 미국 2 + 영국 2 + 일본 2 + 중국 2 + 독일 2
+- 번역 범위 확대: 영어·일본어·중국어·독일어 → 한국어
+- 거시지표 추가: DAX 지수, 원/위안 환율, 유로화 환율
+- GPT 분석: 6개국 글로벌 관점 반영
 """
 
 # ═══════════════════════════════════════════════════════════════
@@ -115,10 +117,25 @@ TOPIC_KEYWORDS_JA = {
     "🛡️ 방산":  "防衛 防衛産業 兵器 安全保障",
 }
 
+TOPIC_KEYWORDS_ZH = {
+    "📈 주식":  "股市 半导体 证券 股价 A股",
+    "💰 경제":  "经济 关税 汇率 利率 GDP 通胀",
+    "🏦 금융":  "金融 银行 证券 央行 货币政策",
+    "🛡️ 방산":  "国防 军工 武器出口 军事 安全",
+}
+
+TOPIC_KEYWORDS_DE = {
+    "📈 주식":  "Aktien DAX Halbleiter Börse Technologie",
+    "💰 경제":  "Wirtschaft Zölle Wechselkurs Zinsen BIP Inflation",
+    "🏦 금융":  "Finanzen Banken EZB Geldpolitik Wertpapiere",
+    "🛡️ 방산":  "Verteidigung Rüstung Waffenexporte Bundeswehr",
+}
+
 EXTRA_KEYWORDS = [
     "관세","천궁","K9전차","홍해","코스피200","코스닥","반도체","금리",
     "보유세","부동산정책","유가","양도소득세","환율","방산","AI","로봇",
     "전기차","우주항공","원전","SMR","해외증시","닛케이","엔화",
+    "위안화","DAX","ECB","중국경기","독일경기",
 ]
 
 # ── 뉴스 수집 설정 ──────────────────────────────────────────
@@ -128,14 +145,16 @@ N_ARTICLES_PER_COUNTRY = {
     "미국": 2,
     "영국": 2,
     "일본": 2,
+    "중국": 2,
+    "독일": 2,
 }
-N_ARTICLES = sum(N_ARTICLES_PER_COUNTRY.values())  # 총 10개
+N_ARTICLES = sum(N_ARTICLES_PER_COUNTRY.values())  # 총 14개
 
 # 중복 우선순위: 경제 > 금융 > 주식 > 방산
 DEDUP_PRIORITY = ["💰 경제", "🏦 금융", "📈 주식", "🛡️ 방산"]
 
 # ══════════════════════════════════════════════════════════════
-# 📰 뉴스 소스 — 4개국 5대 경제신문사
+# 📰 뉴스 소스 — 6개국 5대 경제신문사
 # ══════════════════════════════════════════════════════════════
 #
 # 🇰🇷 한국 5대 경제신문
@@ -166,7 +185,21 @@ DEDUP_PRIORITY = ["💰 경제", "🏦 금융", "📈 주식", "🛡️ 방산"]
 #   4. Japan Times Business       — 영문 일본 경제
 #   5. NHK Business               — 일본 공영 경제 뉴스
 #
-# ※ 직접 RSS 구독 장벽(유료 월) 우회: Google News 검색 RSS 활용
+# 🇨🇳 중국 5대 경제신문 (v24 신규)
+#   1. 人民日報 (인민일보)         — 중국 최대 관영 신문, 정책 방향 선행 지표
+#   2. 新华社 (신화통신)           — 국영 통신사, 대외 공식 발표 채널
+#   3. 南方都市报 (남방도시보)      — 시장경제 시각의 독립적 경제 보도
+#   4. 财新传媒 (차이신)           — 중국판 블룸버그, 금융·기업 심층 분석
+#   5. 第一财经 (제1재경)          — 상하이 기반 경제 전문 방송·신문
+#
+# 🇩🇪 독일 5대 경제신문 (v24 신규)
+#   1. Handelsblatt               — 독일 최대 경제지, 유럽판 WSJ
+#   2. Frankfurter Allgemeine (FAZ) — 독일 3대 일간지, 경제 심층 분석
+#   3. Süddeutsche Zeitung        — 독일 최대 발행부수 일간지
+#   4. Reuters Deutschland        — 독일발 실시간 경제뉴스
+#   5. Spiegel Wirtschaft         — 독일 최대 시사주간지 경제섹션
+#
+# ※ 직접 RSS 구독 장벽(유료 멤버십) 우회: Google News 검색 RSS 활용
 # ══════════════════════════════════════════════════════════════
 NEWS_FEEDS = {
     "한국": [
@@ -197,20 +230,38 @@ NEWS_FEEDS = {
         "https://news.google.com/rss/search?q=Japan+Times+business+economy&hl=en&gl=JP&ceid=JP:en",
         "https://news.google.com/rss/search?q=NHK+Japan+economy+business&hl=en&gl=JP&ceid=JP:en",
     ],
+    "중국": [
+        "https://news.google.com/rss/search?q=人民日报+经济&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+        "https://news.google.com/rss/search?q=新华社+经济+金融&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+        "https://news.google.com/rss/search?q=财新+经济+金融&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+        "https://news.google.com/rss/search?q=第一财经+经济&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+        "https://news.google.com/rss/search?q=China+economy+finance&hl=en&gl=CN&ceid=CN:en",
+    ],
+    "독일": [
+        "https://news.google.com/rss/search?q=Handelsblatt+Wirtschaft&hl=de&gl=DE&ceid=DE:de",
+        "https://news.google.com/rss/search?q=FAZ+Wirtschaft+Finanzen&hl=de&gl=DE&ceid=DE:de",
+        "https://news.google.com/rss/search?q=Süddeutsche+Zeitung+Wirtschaft&hl=de&gl=DE&ceid=DE:de",
+        "https://news.google.com/rss/search?q=Reuters+Deutschland+Wirtschaft&hl=de&gl=DE&ceid=DE:de",
+        "https://news.google.com/rss/search?q=Spiegel+Wirtschaft+Deutschland&hl=de&gl=DE&ceid=DE:de",
+    ],
 }
 
 # ── 거시경제지표 (yfinance) ──────────────────────────────────
 MACRO_INDICATORS = [
-    ("코스피",           "^KS11",  "pt",    2),
-    ("코스닥",           "^KQ11",  "pt",    2),
-    ("나스닥",           "^IXIC",  "pt",    2),
-    ("S&P 500",         "^GSPC",  "pt",    2),
-    ("다우존스",         "^DJI",   "pt",    2),
-    ("닛케이 225",       "^N225",  "pt",    2),
-    ("원/달러 환율",     "KRW=X",  "원",    1),
-    ("원/엔 환율(100엔)","KRWJPY=X","원",   2),
-    ("WTI 원유(26-04)",  "CL=F",   "$/bbl", 2),
-    ("금 선물(26-04)",   "GC=F",   "$/oz",  2),
+    ("코스피",            "^KS11",   "pt",    2),
+    ("코스닥",            "^KQ11",   "pt",    2),
+    ("나스닥",            "^IXIC",   "pt",    2),
+    ("S&P 500",          "^GSPC",   "pt",    2),
+    ("다우존스",          "^DJI",    "pt",    2),
+    ("닛케이 225",        "^N225",   "pt",    2),
+    ("DAX (독일)",        "^GDAXI",  "pt",    2),
+    ("상하이종합 (중국)", "000001.SS","pt",   2),
+    ("원/달러 환율",      "KRW=X",   "원",    1),
+    ("원/엔 환율(100엔)", "KRWJPY=X","원",    2),
+    ("원/위안 환율",      "KRWCNY=X","원",    2),
+    ("원/유로 환율",      "KRWEUR=X","원",    1),
+    ("WTI 원유(26-04)",   "CL=F",    "$/bbl", 2),
+    ("금 선물(26-04)",    "GC=F",    "$/oz",  2),
 ]
 
 MAIL_SUBJECT = "🌅 오늘의 아침 브리핑"
@@ -262,7 +313,7 @@ _translation_cache: dict[str, str] = {}
 
 def translate_to_korean(text: str) -> str:
     """
-    영어·일본어 텍스트를 한국어로 번역 (캐싱 포함).
+    영어·일본어·중국어·독일어 텍스트를 한국어로 번역 (캐싱 포함).
     한글이 이미 포함된 텍스트는 스킵.
     실패 시 원문 반환.
     """
@@ -283,7 +334,7 @@ def translate_to_korean(text: str) -> str:
                 {"role": "system",
                  "content": (
                      "You are a professional translator specializing in economics and finance. "
-                     "Translate the given text (English or Japanese) into natural Korean. "
+                     "Translate the given text (English, Japanese, Chinese, or German) into natural Korean. "
                      "Preserve proper nouns, company names, and financial terms accurately. "
                      "Return only the translated text without any explanation."
                  )},
@@ -547,12 +598,16 @@ def _build_feed_url(country: str, keyword: str) -> list[str]:
         "미국": TOPIC_KEYWORDS_EN.get(keyword, keyword),
         "영국": TOPIC_KEYWORDS_EN.get(keyword, keyword),
         "일본": TOPIC_KEYWORDS_JA.get(keyword, keyword),
+        "중국": TOPIC_KEYWORDS_ZH.get(keyword, keyword),
+        "독일": TOPIC_KEYWORDS_DE.get(keyword, keyword),
     }
     locale_map = {
-        "한국": ("ko", "KR", "ko"),
-        "미국": ("en", "US", "en"),
-        "영국": ("en", "GB", "en"),
-        "일본": ("ja", "JP", "ja"),
+        "한국": ("ko",    "KR", "ko"),
+        "미국": ("en",    "US", "en"),
+        "영국": ("en",    "GB", "en"),
+        "일본": ("ja",    "JP", "ja"),
+        "중국": ("zh-CN", "CN", "zh-Hans"),
+        "독일": ("de",    "DE", "de"),
     }
     kw   = kw_map.get(country, keyword)
     hl, gl, ceid_lang = locale_map.get(country, ("en", "US", "en"))
@@ -679,7 +734,7 @@ def fetch_news_smart(topic: str, keywords_ko: str) -> list[dict]:
     """
     results = []
 
-    for country in ["한국", "미국", "영국", "일본"]:
+    for country in ["한국", "미국", "영국", "일본", "중국", "독일"]:
         needed = N_ARTICLES_PER_COUNTRY[country]
         kw     = keywords_ko  # _build_feed_url 내부에서 국가별 키워드로 변환
 
@@ -740,13 +795,13 @@ def _gpt_select_by_topic(topic: str, ctx: str, count: int) -> list[int]:
 # ═══════════════════════════════════════════════════════════════
 _EXPERT_SYSTEM = (
     "당신은 CFA·FRM 자격증을 보유한 20년 경력의 글로벌 거시경제·투자 전문가입니다. "
-    "블룸버그·WSJ·닛케이·FT에 기고 이력이 있으며 현재 국내 대형 자산운용사 수석 이코노미스트입니다.\n"
+    "블룸버그·WSJ·닛케이·FT·Handelsblatt에 기고 이력이 있으며 현재 국내 대형 자산운용사 수석 이코노미스트입니다.\n"
     "분석 원칙:\n"
     "① 제공된 뉴스 기사의 객관적 사실만을 근거로 분석합니다.\n"
     "② 수치·지표·정책명 등 사실관계를 정확히 인용하고, 근거가 없는 추측은 '~가능성' 또는 '~우려'로 표현합니다.\n"
     "③ 단편적 사건이 아닌 글로벌 거시 흐름과의 연결고리를 제시합니다.\n"
     "④ 투자 판단은 참고용임을 명시하고, 균형 있는 리스크/기회 시각을 유지합니다.\n"
-    "⑤ 한국·미국·영국·일본 4개국 관점을 통합하여 입체적 분석을 제공합니다."
+    "⑤ 한국·미국·영국·일본·중국·독일 6개국 관점을 통합하여 입체적 분석을 제공합니다."
 )
 
 
@@ -786,10 +841,10 @@ def gpt_summarize(topic: str, arts: list) -> str:
         _EXPERT_SYSTEM,
         (
             f"■ 분야: {topic}\n"
-            f"■ 수집 기사 (한국·미국·영국·일본):\n{ctx}\n\n"
+            f"■ 수집 기사 (한국·미국·영국·일본·중국·독일):\n{ctx}\n\n"
             "위 기사들을 바탕으로 다음 형식으로 전문가 브리핑을 작성하세요:\n"
             "1. 📌 핵심 동향 (2문장, 수치·정책명 포함)\n"
-            "2. 🌐 글로벌 시각 (한·미·영·일 공통점 또는 차이점 1문장)\n"
+            "2. 🌐 글로벌 시각 (한·미·영·일·중·독 공통점 또는 차이점 1문장)\n"
             "3. ⚡ 주목 포인트 (투자자·실무자가 반드시 알아야 할 1가지)\n"
             "각 항목은 기사 번호 [n]을 근거로 인용하세요."
         ),
@@ -832,10 +887,10 @@ def gpt_market_analysis(all_arts: list) -> str:
         _EXPERT_SYSTEM,
         (
             f"■ 분석 기준시: {now_str}\n"
-            f"■ 한·미·영·일 주요 기사:\n{ctx}\n\n"
+            f"■ 한·미·영·일·중·독 주요 기사:\n{ctx}\n\n"
             "다음 형식으로 전문가 시장 분석 브리핑을 작성하세요:\n"
             "1. 📊 오늘의 시장 핵심 (3문장 이내, 수치 포함)\n"
-            "2. 🌏 글로벌 매크로 흐름 (미국·영국·일본 동향과 한국 시장 연결, 2~3줄)\n"
+            "2. 🌏 글로벌 매크로 흐름 (미국·영국·일본·중국·독일 동향과 한국 시장 연결, 2~3줄)\n"
             "3. 📈 주목 섹터/종목 시그널 (구체적 근거 포함, 2~3가지)\n"
             "4. ⚠️ 핵심 리스크 요인 (실현 가능성과 근거 포함, 1~2가지)\n"
             "5. 💡 오늘의 투자 인사이트 (객관적 근거 기반, 참고용 1문장)\n"
@@ -873,6 +928,8 @@ COUNTRY_EMOJI = {
     "미국": "🇺🇸",
     "영국": "🇬🇧",
     "일본": "🇯🇵",
+    "중국": "🇨🇳",
+    "독일": "🇩🇪",
 }
 
 
@@ -1109,7 +1166,7 @@ def build_email_html(
     <div style="display:inline-block;background:rgba(255,255,255,.18);
                 color:#fff;font-size:10px;font-weight:600;border-radius:14px;
                 padding:3px 10px;margin-top:7px;border:1px solid rgba(255,255,255,.28);">
-      📍 {city} &nbsp;|&nbsp; 🇰🇷 🇺🇸 🇬🇧 🇯🇵 4개국 5대 경제신문
+      📍 {city} &nbsp;|&nbsp; 🇰🇷 🇺🇸 🇬🇧 🇯🇵 🇨🇳 🇩🇪 6개국 5대 경제신문
     </div>
   </div>
 
@@ -1123,7 +1180,9 @@ def build_email_html(
       🇰🇷 한경·매경·머니투데이·이데일리·파이낸셜뉴스 &nbsp;|&nbsp;
       🇺🇸 WSJ·Bloomberg·Reuters·CNBC·FT &nbsp;|&nbsp;
       🇬🇧 FT·Economist·Reuters UK·Guardian·BBC &nbsp;|&nbsp;
-      🇯🇵 닛케이·Nikkei Asia·産経ビズ·Japan Times·NHK
+      🇯🇵 닛케이·Nikkei Asia·産経ビズ·Japan Times·NHK &nbsp;|&nbsp;
+      🇨🇳 人民日報·新华社·财新·第一财经·南方都市报 &nbsp;|&nbsp;
+      🇩🇪 Handelsblatt·FAZ·Süddeutsche·Reuters DE·Spiegel
     </div>
 
     <!-- 날씨 -->
@@ -1200,8 +1259,8 @@ def build_email_html(
                  padding-bottom:5px;margin:18px 0 10px;font-weight:800;">
         📰 분야별 뉴스
         <span style="font-size:9px;color:#888;font-weight:400;">
-          최근 {NEWS_CUTOFF_DAYS}일 · 분야당 최대 10건
-          (🇰🇷 4 + 🇺🇸 2 + 🇬🇧 2 + 🇯🇵 2)
+          최근 {NEWS_CUTOFF_DAYS}일 · 분야당 최대 14건
+          (🇰🇷 4 + 🇺🇸 2 + 🇬🇧 2 + 🇯🇵 2 + 🇨🇳 2 + 🇩🇪 2)
           · 중복우선순위: 경제&gt;금융&gt;주식&gt;방산
         </span>
       </h2>
@@ -1214,11 +1273,13 @@ def build_email_html(
   <div style="background:#f0f7f0;padding:12px 22px;text-align:center;
               border-top:1px solid #d8ead8;margin-top:12px;">
     <p style="font-size:9px;color:#999;margin:0;line-height:1.6;">
-      ⚡ 4개국 5대 경제신문사 Google News RSS 기반 자동 생성 · 최근 {NEWS_CUTOFF_DAYS}일 기사<br>
+      ⚡ 6개국 5대 경제신문사 Google News RSS 기반 자동 생성 · 최근 {NEWS_CUTOFF_DAYS}일 기사<br>
       🇰🇷 한경·매경·머니투데이·이데일리·파이낸셜뉴스 &nbsp;
       🇺🇸 WSJ·Bloomberg·Reuters·CNBC·FT &nbsp;
-      🇬🇧 FT·Economist·Reuters·Guardian·BBC &nbsp;
-      🇯🇵 닛케이·Nikkei Asia·産経ビズ·Japan Times·NHK<br>
+      🇬🇧 FT·Economist·Reuters·Guardian·BBC<br>
+      🇯🇵 닛케이·Nikkei Asia·産経ビズ·Japan Times·NHK &nbsp;
+      🇨🇳 人民日報·新华社·财新·第一财经·南方都市报 &nbsp;
+      🇩🇪 Handelsblatt·FAZ·Süddeutsche·Reuters DE·Spiegel<br>
       GPT 분석은 제공된 기사에만 근거합니다. 투자 결정은 본인 판단 하에 하세요.
     </p>
   </div>
@@ -1260,9 +1321,9 @@ def send_to_make(html_body: str, subject: str) -> bool:
 # ═══════════════════════════════════════════════════════════════
 def main():
     log.info("=" * 65)
-    log.info(f"🌅 아침 브리핑 v23 생성 시작 — {date_str_kst()}")
-    log.info(f"뉴스 소스: 4개국(🇰🇷🇺🇸🇬🇧🇯🇵) 각 5대 경제신문사")
-    log.info(f"분야별 최대: 🇰🇷 4건 + 🇺🇸 2건 + 🇬🇧 2건 + 🇯🇵 2건 = 총 10건")
+    log.info(f"🌅 아침 브리핑 v24 생성 시작 — {date_str_kst()}")
+    log.info(f"뉴스 소스: 6개국(🇰🇷🇺🇸🇬🇧🇯🇵🇨🇳🇩🇪) 각 5대 경제신문사")
+    log.info(f"분야별 최대: 🇰🇷 4건 + 🇺🇸 2건 + 🇬🇧 2건 + 🇯🇵 2건 + 🇨🇳 2건 + 🇩🇪 2건 = 총 14건")
     log.info(f"중복 우선순위: 경제 > 금융 > 주식 > 방산")
     log.info("=" * 65)
 
@@ -1275,11 +1336,11 @@ def main():
     stocks = fetch_stock_prices(DEFAULT_TICKERS)
 
     # ── 거시경제지표 ──
-    log.info("🌐 [3/7] 거시경제지표 조회 (닛케이·엔화 포함)...")
+    log.info("🌐 [3/7] 거시경제지표 조회 (DAX·상하이·위안·유로 포함)...")
     macros = fetch_macro_indicators()
 
     # ── 뉴스 수집 ──────────────────────────────────────────────
-    log.info("📰 [4/7] 4개국 5대 경제신문 뉴스 수집 시작...")
+    log.info("📰 [4/7] 6개국 5대 경제신문 뉴스 수집 시작...")
 
     raw_pools: dict[str, list] = {}
     for topic in DEDUP_PRIORITY:
@@ -1356,7 +1417,7 @@ def main():
     ok = send_to_make(html_body, subject)
 
     if ok:
-        log.info("✅ 브리핑 발송 완료! (v23)")
+        log.info("✅ 브리핑 발송 완료! (v24)")
     else:
         log.error("❌ 브리핑 발송 실패!")
         sys.exit(1)
