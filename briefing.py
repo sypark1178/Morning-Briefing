@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🌅 아침 브리핑 v25 — 6개국 뉴스 + 싱크탱크 + 정부정책 + 3대 펀드매니저 분석
+🌅 아침 브리핑 v26 — 6개국 뉴스 + 싱크탱크 + 정부정책 + 3대 펀드매니저 + 세계정치 분석
 GitHub Actions + Make Webhook 자동 발송
-v25  |  2026-03  |  KST 05:27 매일 실행
+v26  |  2026-04  |  KST 05:27 매일 실행
 
-변경 사항 (v24 → v25):
-- 방산 뉴스 섹션 → 한국 6대 싱크탱크 리포트 (최대 3건) 대체
-  (현대경제연구원·삼성경제연구소·LG경제연구원·한국경제연구원·한국금융연구원·미래에셋증권 리서치)
-- 한국 정부 경제/금융/주식/부동산 정책 발표 섹션 신규 추가
-- AI 시장 분석: 주식 3대 요소(기업실적·거시경제·투자심리) 프레임 적용
-- AI 시장 분석: 3대 펀드매니저(버핏·린치·소로스) 통합 시각 반영
-- 투자 인사이트: 관심종목별 3대 펀드매니저 시각 피드백 강화
-- 뉴스 분야: 3개 분야 (📈주식 · 💰경제 · 🏦금융) — 방산 제외
+변경 사항 (v25 → v26):
+- 📈주식 분야 뉴스 → 🌏 세계정치 분야 뉴스로 대체
+  뉴스 출처: Politico (politico.com) + Reuters (reuters.com) RSS 피드
+  분석 인사이트: 다론 아세모글루 · 조셉 나이 · 프란시스 후쿠야마 정치석학 시각 적용
+    - 포용적 제도 vs 착취적 제도 (Acemoglu)
+    - 소프트 파워 / 스마트 파워 (Joseph Nye)
+    - 역사의 종언 / 정체성 정치 / 사회적 자본 (Fukuyama)
+  진보·보수 균형 시각, 최대 5건 수집 (중요도 순)
+- 거시경제지표 색상: 상승 → 붉은색(#e63946), 하락 → 파란색(#1d6fa5)
+- 관심종목 색상: 상승 → 붉은색(#e63946), 하락 → 파란색(#1d6fa5)
 """
 
 # ═══════════════════════════════════════════════════════════════
@@ -92,38 +94,38 @@ DEFAULT_TICKERS: dict[str, str] = {
     "LIG넥스원":          "079550.KS",
 }
 
-# ── v25: 뉴스 분야 3개 (방산 제거 → 싱크탱크·정부정책으로 대체) ──
-TOPICS = ["📈 주식", "💰 경제", "🏦 금융"]
-DEDUP_PRIORITY = ["💰 경제", "🏦 금융", "📈 주식"]
+# ── v26: 뉴스 분야 3개 (📈주식 → 🌏세계정치 대체) ──────────────
+TOPICS = ["🌏 세계정치", "💰 경제", "🏦 금융"]
+DEDUP_PRIORITY = ["💰 경제", "🏦 금융", "🌏 세계정치"]
 
 TOPIC_KEYWORDS = {
-    "📈 주식":  "반도체 이차전지 주식 코스피 증시",
-    "💰 경제":  "경제 트럼프관세 환율 금리 부동산정책 GDP",
-    "🏦 금융":  "금융 은행 증권 SMR 에너지 중앙은행",
+    "🌏 세계정치": "정치 외교 선거 국제관계 지정학 민주주의 권위주의",
+    "💰 경제":     "경제 트럼프관세 환율 금리 부동산정책 GDP",
+    "🏦 금융":     "금융 은행 증권 SMR 에너지 중앙은행",
 }
 
 TOPIC_KEYWORDS_EN = {
-    "📈 주식":  "stock market semiconductor battery equity",
-    "💰 경제":  "economy tariff exchange rate interest rate GDP inflation",
-    "🏦 금융":  "finance banking securities central bank Fed monetary",
+    "🌏 세계정치": "politics election democracy geopolitics international relations foreign policy",
+    "💰 경제":     "economy tariff exchange rate interest rate GDP inflation",
+    "🏦 금융":     "finance banking securities central bank Fed monetary",
 }
 
 TOPIC_KEYWORDS_JA = {
-    "📈 주식":  "株式 半導体 証券 株価 日経",
-    "💰 경제":  "経済 関税 為替 金利 GDP インフレ",
-    "🏦 금융":  "金融 銀行 証券 日銀 金融政策",
+    "🌏 세계정치": "政治 外交 選挙 国際関係 地政学 民主主義",
+    "💰 경제":     "経済 関税 為替 金利 GDP インフレ",
+    "🏦 금융":     "金融 銀行 証券 日銀 金融政策",
 }
 
 TOPIC_KEYWORDS_ZH = {
-    "📈 주식":  "股市 半导体 证券 股价 A股",
-    "💰 경제":  "经济 关税 汇率 利率 GDP 通胀",
-    "🏦 금융":  "金融 银行 证券 央行 货币政策",
+    "🌏 세계정치": "政治 外交 选举 国际关系 地缘政治 民主",
+    "💰 경제":     "经济 关税 汇率 利率 GDP 通胀",
+    "🏦 금융":     "金融 银行 证券 央行 货币政策",
 }
 
 TOPIC_KEYWORDS_DE = {
-    "📈 주식":  "Aktien DAX Halbleiter Börse Technologie",
-    "💰 경제":  "Wirtschaft Zölle Wechselkurs Zinsen BIP Inflation",
-    "🏦 금융":  "Finanzen Banken EZB Geldpolitik Wertpapiere",
+    "🌏 세계정치": "Politik Wahl Demokratie Geopolitik internationale Beziehungen Diplomatie",
+    "💰 경제":     "Wirtschaft Zölle Wechselkurs Zinsen BIP Inflation",
+    "🏦 금융":     "Finanzen Banken EZB Geldpolitik Wertpapiere",
 }
 
 # ── 수집 설정 ────────────────────────────────────────────────
@@ -137,6 +139,21 @@ N_ARTICLES = sum(N_ARTICLES_PER_COUNTRY.values())  # 총 14개
 # v25 신규 수집 건수
 N_THINKTANK  = 3   # 싱크탱크 최대 3건
 N_GOVPOLICY  = 7   # 정부정책 최대 7건
+
+# ── v26 신규: 세계정치 뉴스 피드 (Politico + Reuters) ────────────
+N_POLITICS = 5   # 각 소스별 최대 5건 (중요도 순)
+
+POLITICS_FEEDS = [
+    # Politico RSS (글로벌/EU/미국 정치)
+    "https://rss.politico.com/politics-news.xml",
+    "https://rss.politico.com/congress.xml",
+    "https://rss.politico.com/whitehouse.xml",
+    "https://www.politico.eu/feed/",
+    # Reuters RSS (세계 정치·외교·지정학)
+    "https://feeds.reuters.com/reuters/politicsNews",
+    "https://feeds.reuters.com/Reuters/worldNews",
+    "https://feeds.reuters.com/reuters/topNews",
+]
 
 # ── 뉴스 피드: 6개국 5대 경제신문사 ──────────────────────────
 NEWS_FEEDS = {
@@ -773,6 +790,77 @@ def fetch_govpolicy_news() -> list[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 5-D. 세계정치 뉴스 수집 (v26 신규 — Politico + Reuters)
+# ═══════════════════════════════════════════════════════════════
+def fetch_politics_news() -> list[dict]:
+    """
+    Politico + Reuters 에서 세계 정치 뉴스를 수집.
+    정치석학(아세모글루·나이·후쿠야마) 시각으로 중요도 기준 최대 N_POLITICS건 반환.
+    """
+    cutoff   = datetime.now(timezone.utc) - timedelta(days=NEWS_CUTOFF_DAYS)
+    all_arts = _fetch_rss_articles(
+        POLITICS_FEEDS,
+        "미국",          # 영어 피드이므로 번역 적용
+        cutoff,
+        keyword_filter="",
+        fetch_size=N_POLITICS * 4,
+        translate=True,
+    )
+    # 정치 관련성 필터링 (느슨한 키워드 — 거의 모든 정치 뉴스 포함)
+    POLITICS_KW = [
+        "politic", "election", "government", "democracy", "diplomacy",
+        "president", "congress", "senate", "parliament", "minister",
+        "geopolit", "sanction", "treaty", "nato", "united nations",
+        "정치", "선거", "외교", "민주", "대통령", "의회", "지정학",
+    ]
+    filtered = []
+    for a in all_arts:
+        body = (a["title"] + " " + a.get("summary", "")).lower()
+        if any(kw in body for kw in POLITICS_KW):
+            filtered.append(a)
+
+    # GPT 로 중요도 순 상위 N_POLITICS개 선별
+    if len(filtered) > N_POLITICS:
+        ctx = "\n".join(
+            f"[{i+1}] {a['title']}"
+            for i, a in enumerate(filtered[:20])
+        )
+        try:
+            r = client.chat.completions.create(
+                model="gpt-4o-mini",
+                temperature=0.1,
+                max_tokens=80,
+                messages=[
+                    {"role": "system",
+                     "content": (
+                         "You are a political science expert. "
+                         "Select the most globally significant political news articles. "
+                         "Return ONLY a JSON array of 0-based indices, e.g. [0,2,4,1,3]"
+                     )},
+                    {"role": "user",
+                     "content": (
+                         f"Select top {N_POLITICS} most important political news "
+                         f"(balance progressive/conservative perspectives, "
+                         f"prioritize geopolitics, democracy, institutions, power dynamics):\n{ctx}"
+                     )},
+                ],
+            )
+            raw  = r.choices[0].message.content.strip()
+            idxs = json.loads(raw)
+            filtered = [filtered[i] for i in idxs if 0 <= i < len(filtered)]
+        except Exception as e:
+            log.warning(f"⚠️ 정치뉴스 GPT 선별 실패: {e}")
+            filtered = filtered[:N_POLITICS]
+    else:
+        filtered = filtered[:N_POLITICS]
+
+    for a in filtered:
+        a["source_type"] = "politics"
+    log.info(f"✅ 세계정치 뉴스 수집: {len(filtered)}건 / 목표 {N_POLITICS}건")
+    return filtered
+
+
+# ═══════════════════════════════════════════════════════════════
 # 6. GPT 분석/요약 — v25 강화
 # ═══════════════════════════════════════════════════════════════
 
@@ -803,6 +891,28 @@ _FUND_MANAGER_SYSTEM = (
     "  🌊 소로스(Soros): 재귀성·시장 왜곡·거품 형성/붕괴 — 시장의 오류 포착, 단중기\n\n"
     "모든 분석은 제공된 정보의 객관적 사실에만 근거하며, 추측은 '~가능성', '~우려'로 명시합니다. "
     "투자 판단은 참고용이며 최종 결정은 투자자 본인의 판단에 따릅니다."
+)
+
+# ── v26 신규: 3대 정치석학 통합 시스템 ───────────────────────────
+_POLITICAL_SCHOLAR_SYSTEM = (
+    "당신은 다론 아세모글루(Daron Acemoglu), 조셉 나이(Joseph Nye), 프란시스 후쿠야마(Francis Fukuyama)의 "
+    "정치·국제관계 이론을 통합적으로 체화한 세계 최고 수준의 정치 분석가입니다.\n\n"
+    "■ 3대 석학의 핵심 분석 프레임:\n"
+    "  🏛️ 아세모글루(Acemoglu): 포용적 제도(Inclusive Institutions) vs 착취적 제도(Extractive Institutions) — "
+    "국가 번영과 쇠퇴의 근원은 제도적 구조에 있으며, 포용적 정치·경제 제도가 지속 성장을 낳고 "
+    "착취적 제도는 엘리트 이익을 위해 다수를 배제해 장기 침체를 초래함\n"
+    "  🌐 조셉 나이(Joseph Nye): 소프트 파워(Soft Power) / 스마트 파워(Smart Power) — "
+    "군사·경제적 하드 파워와 문화·가치·외교의 소프트 파워를 결합한 스마트 파워가 "
+    "21세기 국제 영향력의 핵심; 매력과 설득을 통한 원하는 결과 달성\n"
+    "  📜 후쿠야마(Fukuyama): 역사의 종언(End of History) · 정체성 정치(Identity Politics) · "
+    "사회적 자본(Trust/Social Capital) — 자유민주주의의 보편적 확산 가능성, 집단 정체성이 "
+    "현대 정치를 재편하는 방식, 사회 신뢰 자본이 민주주의와 경제 발전의 토대임\n\n"
+    "■ 분석 원칙:\n"
+    "① 진보와 보수의 균형 잡힌 시각으로 사실에 근거한 분석을 제공합니다.\n"
+    "② 단편적 사건이 아닌 역사적·구조적 맥락과의 연결고리를 제시합니다.\n"
+    "③ 세 석학의 이론 중 해당 사건에 가장 관련성 높은 프레임을 적용합니다.\n"
+    "④ 지정학적 리스크와 민주주의·권위주의 동학을 균형있게 평가합니다.\n"
+    "⑤ 분석은 제공된 뉴스 사실에만 근거하며, 추측은 '~가능성', '~우려'로 명시합니다."
 )
 
 
@@ -899,6 +1009,41 @@ def gpt_summarize_govpolicy(arts: list) -> str:
             "수치와 정책명을 정확히 인용하세요."
         ),
         max_tokens=600,
+    )
+
+
+def gpt_summarize_politics(arts: list) -> str:
+    """
+    v26 신규: 세계정치 뉴스 분석
+    — 아세모글루·나이·후쿠야마 3대 정치석학 프레임 적용
+    — 진보·보수 균형 시각
+    """
+    if not arts:
+        return "세계정치 관련 기사를 찾을 수 없습니다."
+    ctx = "\n".join(
+        f"[{i+1}] {a['title']} ({a['ago']})\n"
+        f"  → {a.get('summary', '')[:250]}"
+        for i, a in enumerate(arts)
+    )
+    return _gpt(
+        _POLITICAL_SCHOLAR_SYSTEM,
+        (
+            f"■ 오늘의 세계정치 주요 뉴스 (Politico · Reuters):\n{ctx}\n\n"
+            "위 기사들을 3대 정치석학의 프레임으로 분석하여 아래 형식으로 전문가 정치 브리핑을 작성하세요:\n\n"
+            "📌 오늘의 핵심 정치 동향 (2~3문장, 주요 사건·인물·수치 포함)\n\n"
+            "🏛️ 아세모글루 시각 — 포용적 vs 착취적 제도 관점:\n"
+            "  오늘 뉴스에서 나타나는 제도적 포용성·착취성의 징후와 함의 (1~2문장)\n\n"
+            "🌐 조셉 나이 시각 — 소프트/스마트 파워 관점:\n"
+            "  관련 국가들의 소프트 파워·하드 파워 동학 분석 (1~2문장)\n\n"
+            "📜 후쿠야마 시각 — 정체성 정치·사회적 자본·민주주의 관점:\n"
+            "  민주주의 후퇴·강화, 정체성 정치, 사회 신뢰와의 연관성 (1~2문장)\n\n"
+            "⚖️ 진보·보수 균형 평가:\n"
+            "  진보적 관점에서의 해석 / 보수적 관점에서의 해석 (각 1문장)\n\n"
+            "⚡ 투자자·정책입안자 주목 포인트 (지정학적 리스크 또는 기회, 1가지)\n\n"
+            "각 항목은 기사 번호 [n]을 근거로 인용하세요. "
+            "진보와 보수 어느 쪽으로도 치우치지 않은 균형 잡힌 시각을 유지하세요."
+        ),
+        max_tokens=900,
     )
 
 
@@ -1124,7 +1269,8 @@ def _build_stock_html(stocks: list) -> str:
     for i, s in enumerate(stocks):
         up    = s["change"] >= 0
         icon  = "📈" if up else "📉"
-        color = "#27ae60" if up else "#e74c3c"
+        # v26: 상승 → 붉은색, 하락 → 파란색 (한국 증권 관례)
+        color = "#e63946" if up else "#1d6fa5"
         sign  = "+" if up else "-"
         rows += f"""
 <tr style='border-bottom:1px solid #e8edf5;{"background:#f8fbff;" if i%2==0 else ""}'>
@@ -1156,7 +1302,8 @@ def _build_macro_html(macros: list) -> str:
     for m in macros:
         up    = m["change"] >= 0
         icon  = "📈" if up else "📉"
-        color = "#27ae60" if up else "#e74c3c"
+        # v26: 상승 → 붉은색, 하락 → 파란색 (한국 증권 관례)
+        color = "#e63946" if up else "#1d6fa5"
         sign  = "+" if up else "-"
         rows += f"""
 <tr style='border-bottom:1px solid #e0e5eb;'>
@@ -1239,7 +1386,61 @@ def _build_govpolicy_html(arts: list, summary: str) -> str:
     return summary_html + f"<div style='margin-top:10px;'>{items}</div>"
 
 
+def _build_politics_html(arts: list, summary: str) -> str:
+    """v26 신규: 세계정치 뉴스 섹션 HTML."""
+    if not arts and not summary:
+        return "<p style='color:#aaa;font-size:11px;'>세계정치 뉴스 없음</p>"
+
+    SOURCE_BADGE = {
+        "politico": ("#c0392b", "POLITICO"),
+        "reuters":  ("#1a6496", "REUTERS"),
+    }
+
+    def _source_badge(link: str) -> str:
+        if "politico" in link.lower():
+            bg, label = SOURCE_BADGE["politico"]
+        elif "reuters" in link.lower():
+            bg, label = SOURCE_BADGE["reuters"]
+        else:
+            bg, label = ("#555", "NEWS")
+        return (
+            f"<span style='background:{bg};color:#fff;font-size:9px;"
+            f"font-weight:800;padding:1px 6px;border-radius:3px;"
+            f"margin-right:5px;'>{label}</span>"
+        )
+
+    items = ""
+    for i, a in enumerate(arts, 1):
+        link  = a.get("link", "#")
+        badge = _source_badge(link)
+        items += f"""
+<div style='margin-bottom:14px;padding:10px 12px;background:#fff;
+            border-radius:8px;border-left:3px solid #8b1a1a;
+            box-shadow:0 1px 3px rgba(0,0,0,.06);'>
+  <div style='font-size:10px;color:#666;margin-bottom:4px;display:flex;align-items:center;'>
+    {badge}
+    <span>[{i}] 🌏 · {a.get('ago','')}</span>
+  </div>
+  <div style='font-size:12px;font-weight:700;margin-bottom:5px;line-height:1.45;'>
+    <a href="{link}" target="_blank"
+       style='color:#1a3a5c;text-decoration:none;border-bottom:1px solid #c8b0b0;'>
+      {a['title']}
+    </a>
+  </div>
+  <div style='font-size:11px;color:#555;line-height:1.55;'>{a.get('summary','')[:200]}</div>
+</div>"""
+
+    summary_html = f"""
+<div style='font-size:12px;line-height:1.8;color:#333;background:#fff8f8;
+            border-radius:6px;padding:12px 14px;margin-bottom:14px;
+            border-left:4px solid #8b1a1a;'>
+  {summary.replace(chr(10), '<br>')}
+</div>"""
+    return summary_html + f"<div style='margin-top:10px;'>{items}</div>"
+
+
 def _build_news_section_html(topic: str, arts: list) -> str:
+    """분야별 뉴스 기사 목록 HTML (6개국 이모지 포함)."""
     if not arts:
         return "<p style='color:#aaa;font-size:11px;'>해당 분야 기사 없음</p>"
     items = ""
@@ -1250,7 +1451,7 @@ def _build_news_section_html(topic: str, arts: list) -> str:
         items += f"""
 <div style='margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #eef2f7;'>
   <div style='font-size:10px;color:#999;margin-bottom:3px;'>
-    [{i}] {flag} {a.get('country','?')}{src} · {a['ago']}
+    [{i}] {flag} {a.get('country','?')}{src} · {a.get('ago','')}
   </div>
   <div style='font-size:12px;font-weight:700;margin-bottom:5px;line-height:1.45;'>
     <a href="{link}" target="_blank"
@@ -1258,7 +1459,7 @@ def _build_news_section_html(topic: str, arts: list) -> str:
       {a['title']}
     </a>
   </div>
-  <div style='font-size:11px;color:#666;line-height:1.55;'>{a['summary'][:180]}</div>
+  <div style='font-size:11px;color:#666;line-height:1.55;'>{a.get('summary','')[:180]}</div>
 </div>"""
     return f"<div style='margin:12px 0;'>{items}</div>"
 
@@ -1274,6 +1475,8 @@ def build_email_html(
     thinktank_sum: str,
     govpolicy_arts: list,
     govpolicy_sum: str,
+    politics_arts: list,
+    politics_sum: str,
     top3: str,
     market: str,
     investment_insight: str,
@@ -1285,6 +1488,7 @@ def build_email_html(
     macro_html      = _build_macro_html(macros)
     thinktank_html  = _build_thinktank_html(thinktank_arts, thinktank_sum)
     govpolicy_html  = _build_govpolicy_html(govpolicy_arts, govpolicy_sum)
+    politics_html   = _build_politics_html(politics_arts, politics_sum)
 
     top3_html    = f"<div style='font-size:12px;line-height:1.75;color:#333;'>{top3.replace(chr(10), '<br>')}</div>"
     market_html  = f"<div style='font-size:12px;line-height:1.8;color:#333;'>{market.replace(chr(10), '<br>')}</div>"
@@ -1348,15 +1552,15 @@ def build_email_html(
               padding:20px 22px 16px;">
     <h1 style="color:#fff;font-size:18px;margin:0 0 4px;font-weight:800;
                letter-spacing:-0.3px;">
-      🌅 아침 브리핑 v25
+      🌅 아침 브리핑 v26
     </h1>
     <p style="color:rgba(255,255,255,.88);font-size:11px;margin:0;">
-      {date_s} &nbsp;|&nbsp; GPT-4o-mini · KIS API · 6개국 경제신문 · 싱크탱크 · 정부정책
+      {date_s} &nbsp;|&nbsp; GPT-4o-mini · KIS API · 6개국 경제신문 · 싱크탱크 · 정부정책 · 세계정치
     </p>
     <div style="display:inline-block;background:rgba(255,255,255,.18);
                 color:#fff;font-size:10px;font-weight:600;border-radius:14px;
                 padding:3px 10px;margin-top:7px;border:1px solid rgba(255,255,255,.28);">
-      📍 {city} &nbsp;|&nbsp; 🇰🇷 🇺🇸 🇬🇧 🇯🇵 🇨🇳 🇩🇪 6개국 · 🏛️ 싱크탱크 · 🏦 정책분석
+      📍 {city} &nbsp;|&nbsp; 🇰🇷 🇺🇸 🇬🇧 🇯🇵 🇨🇳 🇩🇪 6개국 · 🏛️ 싱크탱크 · 🏦 정책분석 · 🌏 세계정치
     </div>
   </div>
 
@@ -1365,13 +1569,16 @@ def build_email_html(
     <!-- 수집 대상 안내 -->
     <div style="background:#f0f7f0;border:1px solid #c8e6c9;border-radius:8px;
                 padding:10px 14px;margin-bottom:16px;font-size:10px;color:#555;line-height:1.7;">
-      <strong style="color:#1b4332;">📰 뉴스 소스</strong><br>
+      <strong style="color:#1b4332;">📰 경제·금융 뉴스 소스</strong><br>
       🇰🇷 한경·매경·머니투데이·이데일리·파이낸셜뉴스 &nbsp;|&nbsp;
       🇺🇸 WSJ·Bloomberg·Reuters·CNBC·FT &nbsp;|&nbsp;
       🇬🇧 FT·Economist·Reuters·Guardian·BBC &nbsp;|&nbsp;
       🇯🇵 닛케이·Nikkei Asia·産経ビズ·Japan Times·NHK &nbsp;|&nbsp;
       🇨🇳 人民日報·新华社·财新·第一财经·南方都市报 &nbsp;|&nbsp;
       🇩🇪 Handelsblatt·FAZ·Süddeutsche·Reuters DE·Spiegel<br>
+      <strong style="color:#1b4332;">🌏 세계정치 뉴스 소스</strong>
+      Politico (politico.com · politico.eu) · Reuters World/Politics &nbsp;|&nbsp;
+      분석 프레임: 아세모글루·조셉 나이·후쿠야마 · 진보·보수 균형 시각<br>
       <strong style="color:#1b4332;">🏛️ 싱크탱크</strong>
       현대경제연구원·삼성경제연구소·LG경제연구원·한국경제연구원·한국금융연구원·미래에셋증권 리서치
     </div>
@@ -1470,6 +1677,23 @@ def build_email_html(
     <div class="briefing-section">
       <h2 style="font-size:13px;color:#1b4332;border-bottom:2px solid #40916c;
                  padding-bottom:5px;margin:18px 0 10px;font-weight:800;">
+        🌏 세계정치 분석
+        <span style="font-size:9px;color:#888;font-weight:400;">
+          Politico · Reuters · 최대 {N_POLITICS}건 · 아세모글루·나이·후쿠야마 시각
+        </span>
+      </h2>
+      <div style="background:#fff3f3;border:1px solid #f5c6c6;border-radius:8px;
+                  padding:6px 10px;margin-bottom:10px;font-size:10px;color:#7b1c1c;">
+        🏛️ 분석 프레임: 포용적 제도(Acemoglu) · 소프트/스마트 파워(Nye) · 정체성 정치·사회적 자본(Fukuyama)
+        &nbsp;|&nbsp; 진보·보수 균형 시각
+      </div>
+      {politics_html}
+    </div>
+
+    <!-- 싱크탱크 분석 (v25: 방산 대체) -->
+    <div class="briefing-section">
+      <h2 style="font-size:13px;color:#1b4332;border-bottom:2px solid #40916c;
+                 padding-bottom:5px;margin:18px 0 10px;font-weight:800;">
         🏛️ 싱크탱크 분석 리포트
         <span style="font-size:9px;color:#888;font-weight:400;">
           최대 {N_THINKTANK}건 · 현대경제연구원·삼성경제연구소·LG·한국경제연구원·한국금융연구원·미래에셋
@@ -1490,14 +1714,14 @@ def build_email_html(
       {govpolicy_html}
     </div>
 
-    <!-- 분야별 뉴스 (3개 분야) -->
+    <!-- 분야별 뉴스 (3개 분야: 세계정치·경제·금융) -->
     <div class="briefing-section">
       <h2 style="font-size:13px;color:#1b4332;border-bottom:2px solid #40916c;
                  padding-bottom:5px;margin:18px 0 10px;font-weight:800;">
         📰 분야별 뉴스
         <span style="font-size:9px;color:#888;font-weight:400;">
           최근 {NEWS_CUTOFF_DAYS}일 · 분야당 최대 14건
-          (🇰🇷 4 + 🇺🇸 2 + 🇬🇧 2 + 🇯🇵 2 + 🇨🇳 2 + 🇩🇪 2)
+          (🇰🇷 4 + 🇺🇸 2 + 🇬🇧 2 + 🇯🇵 2 + 🇨🇳 2 + 🇩🇪 2) · 🌏세계정치·💰경제·🏦금융
         </span>
       </h2>
       {news_sections}
@@ -1509,8 +1733,9 @@ def build_email_html(
   <div style="background:#f0f7f0;padding:12px 22px;text-align:center;
               border-top:1px solid #d8ead8;margin-top:12px;">
     <p style="font-size:9px;color:#999;margin:0;line-height:1.6;">
-      ⚡ 아침 브리핑 v25 — 6개국 5대 경제신문 · 한국 6대 싱크탱크 · 정부정책 통합 분석<br>
-      📊 분석 프레임: 기업실적(Earnings) · 거시경제(Macro) · 투자심리(Sentiment)<br>
+      ⚡ 아침 브리핑 v26 — 6개국 5대 경제신문 · 한국 6대 싱크탱크 · 정부정책 · 세계정치 통합 분석<br>
+      🌏 정치 분석: 아세모글루(포용적 제도) · 조셉 나이(소프트/스마트 파워) · 후쿠야마(정체성 정치·사회적 자본) · 진보·보수 균형<br>
+      📊 투자 프레임: 기업실적(Earnings) · 거시경제(Macro) · 투자심리(Sentiment)<br>
       🏦 버핏(해자·내재가치) · 📈 린치(PEG·성장스토리) · 🌊 소로스(재귀성·시장왜곡) 통합 시각<br>
       GPT 분석은 제공된 기사에만 근거합니다. 투자 결정은 본인 판단 하에 하세요.
     </p>
@@ -1543,34 +1768,68 @@ def send_to_make(html_body: str, subject: str) -> bool:
         log.error(f"❌ Make Webhook 예외: {e}")
         return False
 
+# ═══════════════════════════════════════════════════════════════
+# 8. 발송 엔진 (SMTP 직접 발송 - Manual 용도)
+# ═══════════════════════════════════════════════════════════════
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+def send_via_smtp(html_body: str, subject: str) -> bool:
+    smtp_server = "smtp.gmail.com"
+    smtp_port = 587
+    # .env 파일에 반드시 SMTP_USER (본인 이메일) 및 SMTP_APP_PW (앱 비밀번호) 추가 필요
+    smtp_user = _env("SMTP_USER")      
+    smtp_pw = _env("SMTP_APP_PW")      
+    target_email = "sypark1178@gmail.com" # 테스트 발송 타겟
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = smtp_user
+    msg["To"] = target_email
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    try:
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(smtp_user, smtp_pw)
+        server.sendmail(smtp_user, target_email, msg.as_string())
+        server.quit()
+        log.info(f"✅ sypark1178@gmail.com 으로 이메일 수동 발송 성공!")
+        return True
+    except Exception as e:
+        log.error(f"❌ SMTP 발송 실패: {e}")
+        return False
 
 # ═══════════════════════════════════════════════════════════════
 # 9. 메인 실행 (v25 최적화 흐름)
 # ═══════════════════════════════════════════════════════════════
 def main():
     log.info("=" * 65)
-    log.info(f"🌅 아침 브리핑 v25 생성 시작 — {date_str_kst()}")
+    log.info(f"🌅 아침 브리핑 v26 생성 시작 — {date_str_kst()}")
     log.info("뉴스 소스: 6개국(🇰🇷🇺🇸🇬🇧🇯🇵🇨🇳🇩🇪) 각 5대 경제신문사")
+    log.info("세계정치: Politico · Reuters — 아세모글루·나이·후쿠야마 시각 · 진보·보수 균형")
     log.info("싱크탱크: 현대경제연구원·삼성경제연구소·LG경제연구원·한국경제연구원·한국금융연구원·미래에셋")
     log.info("정책분석: 기획재정부·금융위원회·국토교통부·한국은행·금융감독원")
     log.info(f"분야별 최대: 🇰🇷 4건 + 🇺🇸 2건 + 🇬🇧 2건 + 🇯🇵 2건 + 🇨🇳 2건 + 🇩🇪 2건 = 총 14건")
     log.info(f"분석 프레임: 3대요소(실적·거시·심리) + 버핏·린치·소로스 통합 시각")
+    log.info("색상: 상승=붉은색(#e63946) / 하락=파란색(#1d6fa5)")
     log.info("=" * 65)
 
-    # ── [1/9] 날씨 ──────────────────────────────────────────────
-    log.info("🌤️ [1/9] 날씨 조회...")
+    # ── [1/10] 날씨 ──────────────────────────────────────────────
+    log.info("🌤️ [1/10] 날씨 조회...")
     wd = fetch_weather(CITY)
 
-    # ── [2/9] 관심종목 주가 ─────────────────────────────────────
-    log.info("📈 [2/9] 관심종목 주가 조회...")
+    # ── [2/10] 관심종목 주가 ─────────────────────────────────────
+    log.info("📈 [2/10] 관심종목 주가 조회...")
     stocks = fetch_stock_prices(DEFAULT_TICKERS)
 
-    # ── [3/9] 거시경제지표 ──────────────────────────────────────
-    log.info("🌐 [3/9] 거시경제지표 조회 (14개)...")
+    # ── [3/10] 거시경제지표 ──────────────────────────────────────
+    log.info("🌐 [3/10] 거시경제지표 조회 (14개)...")
     macros = fetch_macro_indicators()
 
-    # ── [4/9] 6개국 분야별 뉴스 수집 ───────────────────────────
-    log.info("📰 [4/9] 6개국 5대 경제신문 뉴스 수집 (3개 분야)...")
+    # ── [4/10] 6개국 분야별 뉴스 수집 ───────────────────────────
+    log.info("📰 [4/10] 6개국 5대 경제신문 뉴스 수집 (3개 분야: 세계정치·경제·금융)...")
     raw_pools: dict[str, list] = {}
     for topic in DEDUP_PRIORITY:
         kw   = TOPIC_KEYWORDS.get(topic, topic)
@@ -1596,18 +1855,22 @@ def main():
         topic_arts[topic] = selected
         log.info(f"  ✓ {topic}: 후보 {len(candidates)}건 → 중복제거 후 {len(selected)}건 확정")
 
-    # ── [5/9] 싱크탱크 수집 ─────────────────────────────────────
-    log.info("🏛️ [5/9] 한국 6대 싱크탱크 자료 수집...")
+    # ── [5/10] 세계정치 뉴스 수집 (Politico + Reuters) ──────────
+    log.info("🌏 [5/10] 세계정치 뉴스 수집 (Politico · Reuters)...")
+    politics_arts = fetch_politics_news()
+
+    # ── [6/10] 싱크탱크 수집 ─────────────────────────────────────
+    log.info("🏛️ [6/10] 한국 6대 싱크탱크 자료 수집...")
     thinktank_arts = fetch_thinktank_news()
 
-    # ── [6/9] 정부 경제정책 수집 ────────────────────────────────
-    log.info("📋 [6/9] 한국 정부 경제정책 발표 수집...")
+    # ── [7/10] 정부 경제정책 수집 ────────────────────────────────
+    log.info("📋 [7/10] 한국 정부 경제정책 발표 수집...")
     govpolicy_arts = fetch_govpolicy_news()
 
-    # ── [7/9] GPT 분석 ──────────────────────────────────────────
-    log.info("🤖 [7/9] GPT 전문가 분석 시작...")
+    # ── [8/10] GPT 분석 ──────────────────────────────────────────
+    log.info("🤖 [8/10] GPT 전문가 분석 시작...")
 
-    # 7-1. 분야별 뉴스 요약
+    # 8-1. 분야별 뉴스 요약 (세계정치 포함)
     topic_sums: dict[str, str] = {}
     all_arts: list[dict]       = []
     for topic in TOPICS:
@@ -1618,34 +1881,38 @@ def main():
         topic_sums[topic] = gpt_summarize(topic, arts)
         log.info(f"  ✓ {topic}: 요약 완료")
 
-    # 7-2. 싱크탱크 요약
+    # 8-2. 세계정치 뉴스 GPT 분석 (정치석학 프레임)
+    log.info("  ✓ 세계정치 GPT 분석 (아세모글루·나이·후쿠야마)...")
+    politics_sum = gpt_summarize_politics(politics_arts)
+
+    # 8-3. 싱크탱크 요약
     log.info("  ✓ 싱크탱크 GPT 요약...")
     thinktank_sum = gpt_summarize_thinktank(thinktank_arts)
 
-    # 7-3. 정부정책 요약
+    # 8-4. 정부정책 요약
     log.info("  ✓ 정부정책 GPT 요약...")
     govpolicy_sum = gpt_summarize_govpolicy(govpolicy_arts)
 
-    # 7-4. TOP3 선정
+    # 8-5. TOP3 선정
     log.info("  ✓ TOP3 선정...")
     top3 = gpt_top3(all_arts)
 
-    # 7-5. AI 시장 분석 (3대요소 + 3대 펀드매니저)
+    # 8-6. AI 시장 분석 (3대요소 + 3대 펀드매니저)
     log.info("  ✓ AI 시장 분석 브리핑 (3대요소 + 버핏·린치·소로스)...")
     market = gpt_market_analysis(all_arts, thinktank_sum, govpolicy_sum, macros)
 
-    # 7-6. 투자 인사이트 + 관심종목 피드백
+    # 8-7. 투자 인사이트 + 관심종목 피드백
     log.info("  ✓ 투자 인사이트 + 관심종목 3대 거장 피드백...")
     investment_insight = gpt_investment_insight(
         all_arts, thinktank_sum, govpolicy_sum, market, stocks, macros
     )
 
-    # 7-7. 오늘의 한 마디
+    # 8-8. 오늘의 한 마디
     log.info("  ✓ 오늘의 한 마디...")
     comment = gpt_comment(wd, CITY, topic_sums)
 
-    # ── [8/9] HTML 이메일 빌드 ──────────────────────────────────
-    log.info("🖥️  [8/9] HTML 이메일 빌드...")
+    # ── [9/10] HTML 이메일 빌드 ──────────────────────────────────
+    log.info("🖥️  [9/10] HTML 이메일 빌드...")
     html_body = build_email_html(
         city=CITY,
         wd=wd,
@@ -1657,6 +1924,8 @@ def main():
         thinktank_sum=thinktank_sum,
         govpolicy_arts=govpolicy_arts,
         govpolicy_sum=govpolicy_sum,
+        politics_arts=politics_arts,
+        politics_sum=politics_sum,
         top3=top3,
         market=market,
         investment_insight=investment_insight,
@@ -1667,16 +1936,29 @@ def main():
         f.write(html_body)
     log.info("💾 briefing_output.html 저장 완료")
 
-    # ── [9/9] Make Webhook 발송 ─────────────────────────────────
-    log.info("📨 [9/9] Make Webhook 발송...")
-    subject = f"{MAIL_SUBJECT} — {now_kst().strftime('%Y/%m/%d')} (v25)"
-    ok = send_to_make(html_body, subject)
+#    # ── [10/10] Make Webhook 발송 ────────────────────────────────
+#    log.info("📨 [10/10] Make Webhook 발송...")
+#    subject = f"{MAIL_SUBJECT} — {now_kst().strftime('%Y/%m/%d')} (v26)"
+#    ok = send_to_make(html_body, subject)
+#
+#    if ok:
+#        log.info("✅ 브리핑 v26 발송 완료!")
+#    else:
+#        log.error("❌ 브리핑 발송 실패!")
+#        sys.exit(1)
 
-    if ok:
-        log.info("✅ 브리핑 v25 발송 완료!")
-    else:
-        log.error("❌ 브리핑 발송 실패!")
-        sys.exit(1)
+#    # [9/9] Make Webhook 발송
+#    log.info("[9/9] Make Webhook 발송")
+#    if send_to_make(html_body, f"{MAIL_SUBJECT} - {now_kst().strftime('%Y/%m/%d')}"):
+#        log.info("✅ V2.0 자동 발송 완료!")
+#    else:
+#        log.error("❌ Make Webhook 발송 실패")
+#    html_body = build_email_html(CITY, wd, stocks, macros, topic_arts, topic_sums, thinktank_arts, thinktank_sum, govpolicy_arts, govpolicy_sum, top3, market, insight, comment)
+    
+
+    # Make Webhook 대신 SMTP 함수 호출
+    if send_via_smtp(html_body, f"{MAIL_SUBJECT} - 수동 테스트 ({now_kst().strftime('%Y/%m/%d')})"):
+        log.info("✅ V2.0 수동 발송 테스트 완료!")
 
 
 if __name__ == "__main__":
