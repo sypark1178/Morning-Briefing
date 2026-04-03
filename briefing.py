@@ -1801,6 +1801,29 @@ def send_via_smtp(html_body: str, subject: str) -> bool:
         log.error(f"❌ SMTP 발송 실패: {e}")
         return False
 
+
+# ═══════════════════════════════════════════════════════════════
+# 8. Make Webhook 발송
+# ═══════════════════════════════════════════════════════════════
+def send_to_make(html_body: str, subject: str) -> bool:
+    sent_at = now_kst().strftime("%Y-%m-%d %H:%M KST")
+    payload = {"html_body": html_body, "subject": subject, "sent_at": sent_at}
+    try:
+        res = requests.post(
+            MAKE_WEBHOOK_URL,
+            json=payload,
+            timeout=30,
+            headers={"Content-Type": "application/json"},
+        )
+        if res.status_code in (200, 204):
+            log.info(f"✅ Make Webhook 발송 성공: {res.status_code}")
+            return True
+        log.error(f"❌ Make Webhook 실패: {res.status_code} / {res.text[:200]}")
+        return False
+    except Exception as e:
+        log.error(f"❌ Make Webhook 예외: {e}")
+        return False
+
 # ═══════════════════════════════════════════════════════════════
 # 9. 메인 실행 (v25 최적화 흐름)
 # ═══════════════════════════════════════════════════════════════
@@ -1936,29 +1959,22 @@ def main():
         f.write(html_body)
     log.info("💾 briefing_output.html 저장 완료")
 
-#    # ── [10/10] Make Webhook 발송 ────────────────────────────────
-#    log.info("📨 [10/10] Make Webhook 발송...")
-#    subject = f"{MAIL_SUBJECT} — {now_kst().strftime('%Y/%m/%d')} (v26)"
-#    ok = send_to_make(html_body, subject)
-#
-#    if ok:
-#        log.info("✅ 브리핑 v26 발송 완료!")
-#    else:
-#        log.error("❌ 브리핑 발송 실패!")
-#        sys.exit(1)
-
-#    # [9/9] Make Webhook 발송
-#    log.info("[9/9] Make Webhook 발송")
-#    if send_to_make(html_body, f"{MAIL_SUBJECT} - {now_kst().strftime('%Y/%m/%d')}"):
-#        log.info("✅ V2.0 자동 발송 완료!")
-#    else:
-#        log.error("❌ Make Webhook 발송 실패")
-#    html_body = build_email_html(CITY, wd, stocks, macros, topic_arts, topic_sums, thinktank_arts, thinktank_sum, govpolicy_arts, govpolicy_sum, top3, market, insight, comment)
     
 
-    # Make Webhook 대신 SMTP 함수 호출
-    if send_via_smtp(html_body, f"{MAIL_SUBJECT} - 수동 테스트 ({now_kst().strftime('%Y/%m/%d')})"):
-        log.info("✅ V2.0 수동 발송 테스트 완료!")
+#    #  ── [9/9]  Make Webhook 대신 SMTP 함수 호출  ─────────────────────────────────
+#    if send_via_smtp(html_body, f"{MAIL_SUBJECT} - 수동 테스트 ({now_kst().strftime('%Y/%m/%d')})"):
+#        log.info("✅ V2.0 수동 발송 테스트 완료!")
+#
+    # ── [9/9] Make Webhook 발송 ─────────────────────────────────
+    log.info("📨 [9/9] Make Webhook 발송...")
+    subject = f"{MAIL_SUBJECT} — {now_kst().strftime('%Y/%m/%d')} (v26)"
+    ok = send_to_make(html_body, subject)
+
+    if ok:
+        log.info("✅ 브리핑 V2.0 발송 완료!")
+    else:
+        log.error("❌ 브리핑 V2.0 발송 실패!")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
